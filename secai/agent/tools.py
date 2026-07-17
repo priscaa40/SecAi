@@ -1,29 +1,47 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 
 from langchain_core.tools import tool
 
 from secai import database
-from secai.settings import get_settings
-from secai.integrations import alibaba_autopilot
 from secai.event_sources import alibaba_sls
 from secai.knowledge import mcp_client as security_knowledge_mcp
+from secai.settings import get_settings
+
+_site_scope: ContextVar[str | None] = ContextVar("secai_agent_tool_site", default=None)
+
+
+@contextmanager
+def scoped_site(site_id: str) -> Iterator[None]:
+    """Limit tenant-aware agent tools to the event's website."""
+    token = _site_scope.set(site_id)
+    try:
+        yield
+    finally:
+        _site_scope.reset(token)
 
 
 @tool
 def get_recent_events_for_site(site_id: str, limit: int = 25) -> str:
     """Return recent normalized SecAi events for a site as JSON."""
+    if error := _site_scope_error(site_id):
+        return error
     capped_limit = min(limit, get_settings().secai_recent_event_limit)
-    events = database.recent_events(site_id, limit=capped_limit)
-    return json.dumps(events, default=str)
+    events = database.recent_analysis_events(site_id, limit=capped_limit)
+    return _bounded_tool_json(events)
 
 
 @tool
 def summarize_event_window(site_id: str, ip: str | None = None, path: str | None = None, limit: int = 100) -> str:
     """Summarize recent event counts by IP, route, and evidence hints for investigation."""
+    if error := _site_scope_error(site_id):
+        return error
     capped_limit = min(limit, get_settings().secai_recent_event_limit)
-    events = database.recent_events(site_id, limit=capped_limit)
+    events = database.recent_analysis_events(site_id, limit=capped_limit)
     if ip:
         events = [event for event in events if event.get("ip") == ip]
     if path:
@@ -45,65 +63,53 @@ def summarize_event_window(site_id: str, ip: str | None = None, path: str | None
             "top_ips": sorted(ips.items(), key=lambda item: item[1], reverse=True)[:5],
             "evidence_hints": sorted(signals.items(), key=lambda item: item[1], reverse=True)[:8],
         },
-        default=str,
     )
 
 
 @tool
 def pull_live_sls_logs(site_id: str, minutes: int = 15, query: str = "*", limit: int = 50) -> str:
-    """Pull fresh security-relevant Alibaba SLS events for a connected site during investigation."""
-    capped_limit = max(1, min(limit, 100))
+    """Read fresh Alibaba SLS evidence without persisting or independently analyzing it."""
+    if error := _site_scope_error(site_id):
+        return error
+    capped_limit = max(1, min(limit, get_settings().secai_recent_event_limit))
     capped_minutes = max(1, min(minutes, 60))
     try:
         events = alibaba_sls.fetch_saved_site_events(site_id, query=query, minutes=capped_minutes, limit=capped_limit)
     except alibaba_sls.SlsNotConfigured:
-        return json.dumps({"error": "alibaba_sls_not_connected", "message": "This site has no Alibaba SLS connection configured."})
-    except alibaba_sls.SlsConnectionRevoked as exc:
         return json.dumps(
-            {
-                "error": "alibaba_sls_connection_revoked",
-                "message": "The site owner needs to reconnect Alibaba SLS.",
-                "detail": str(exc),
-            }
+            {"error": "alibaba_sls_not_connected", "message": "This site has no Alibaba SLS connection configured."}
         )
-    except Exception as exc:
-        return json.dumps({"error": "alibaba_sls_pull_failed", "message": str(exc)})
-    stored_events: list[dict] = []
-    duplicates_skipped = 0
-    for event in events:
-        stored_event = database.insert_event(event)
-        if stored_event.pop("_deduplicated", False):
-            duplicates_skipped += 1
-        stored_events.append(stored_event)
-    return json.dumps(
+    except Exception:
+        return json.dumps({"error": "alibaba_sls_pull_failed", "message": "Alibaba SLS could not be queried."})
+    return _bounded_tool_json(
         {
             "events_seen": len(events),
-            "events_persisted": len(events) - duplicates_skipped,
-            "duplicates_skipped": duplicates_skipped,
+            "read_only": True,
             "minutes": capped_minutes,
             "query": query,
-            "events": stored_events,
+            "events": events,
         },
-        default=str,
     )
 
 
 @tool
 def get_site_policies(site_id: str) -> str:
     """Return currently approved SecAi policies for a site as JSON."""
-    return json.dumps(database.list_policies(site_id), default=str)
+    if error := _site_scope_error(site_id):
+        return error
+    return _bounded_tool_json(database.list_policies(site_id, limit=25))
 
 
 @tool
 def list_security_profiles() -> str:
     """Return source-backed SecAi security profiles as JSON."""
-    return json.dumps(security_knowledge_mcp.call_tool("list_security_profiles"), default=str)
+    return json.dumps(_security_knowledge_payload("list_security_profiles"), default=str)
 
 
 @tool
 def lookup_security_profile(entry_id: str) -> str:
     """Return one source-backed SecAi security profile by ID as JSON."""
-    return json.dumps(security_knowledge_mcp.call_tool("lookup_security_profile", {"entry_id": entry_id}), default=str)
+    return json.dumps(_security_knowledge_payload("lookup_security_profile", {"entry_id": entry_id}), default=str)
 
 
 @tool
@@ -113,41 +119,58 @@ def find_matching_security_profiles(event_json: str) -> str:
         event = json.loads(event_json)
     except json.JSONDecodeError:
         event = {"metadata": {"raw": event_json}}
-    return json.dumps(security_knowledge_mcp.call_tool("find_matching_security_profiles", {"event": event}), default=str)
-
-
-@tool
-def get_remediation_options(entry_id: str, site_id: str | None = None) -> str:
-    """Return allowed remediation options for a source-backed SecAi security profile."""
-    options = security_knowledge_mcp.call_tool("get_remediation_options", {"entry_id": entry_id})
-    if site_id and not options.get("error"):
-        profile_actions = options.get("allowed_actions", [])
-        site_actions = alibaba_autopilot.available_actions_for_site(site_id, profile_actions)
-        options = {
-            **options,
-            "site_id": site_id,
-            "site_available_actions": site_actions,
-            "site_autopilot_status": alibaba_autopilot.site_status(site_id),
-        }
-    return json.dumps(options, default=str)
+    return json.dumps(_security_knowledge_payload("find_matching_security_profiles", {"event": event}), default=str)
 
 
 @tool
 def search_nvd_vulnerabilities(keyword: str | None = None, cwe_id: str | None = None, limit: int = 5) -> str:
     """Search the official NVD CVE API for current vulnerability context."""
-    return json.dumps(
-        security_knowledge_mcp.call_tool("search_nvd_vulnerabilities", {"keyword": keyword, "cwe_id": cwe_id, "limit": limit}),
-        default=str,
+    return _bounded_tool_json(
+        _security_knowledge_payload(
+            "search_nvd_vulnerabilities", {"keyword": keyword, "cwe_id": cwe_id, "limit": limit}
+        )
     )
 
 
 @tool
 def query_osv_package_vulnerabilities(ecosystem: str, package: str, version: str | None = None) -> str:
     """Query the official OSV API for package vulnerability context."""
-    return json.dumps(
-        security_knowledge_mcp.call_tool(
+    return _bounded_tool_json(
+        _security_knowledge_payload(
             "query_osv_package_vulnerabilities",
             {"ecosystem": ecosystem, "package": package, "version": version},
-        ),
-        default=str,
+        )
     )
+
+
+def _site_scope_error(site_id: str) -> str | None:
+    scoped_site_id = _site_scope.get()
+    if scoped_site_id and site_id != scoped_site_id:
+        return json.dumps(
+            {
+                "error": "website_scope_violation",
+                "message": "This investigation can only access evidence for its own website.",
+            }
+        )
+    return None
+
+
+def _security_knowledge_payload(name: str, arguments: dict | None = None):
+    """Return MCP payloads in the current agent-tool JSON contract."""
+    try:
+        return security_knowledge_mcp.call_tool(name, arguments)
+    except security_knowledge_mcp.SecurityKnowledgeMcpError:
+        return {
+            "error": "security_knowledge_unavailable",
+            "tool": name,
+            "message": "The security knowledge service is temporarily unavailable.",
+        }
+
+
+def _bounded_tool_json(value: object) -> str:
+    """Keep tool responses below the shared Qwen context budget."""
+    rendered = json.dumps(value, default=str, separators=(",", ":"))
+    limit = max(2000, get_settings().secai_model_context_chars // 2)
+    if len(rendered) <= limit:
+        return rendered
+    return json.dumps({"truncated": True, "preview": rendered[: limit - 50]}, separators=(",", ":"))

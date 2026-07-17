@@ -2,85 +2,81 @@ from __future__ import annotations
 
 from typing import Any, Literal, TypedDict
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from secai.models import RemediationAction, Severity
 
+InvestigationDecisionType = Literal["ignore", "escalate"]
 
-WorkflowDecision = Literal["ignore", "create_incident", "request_more_evidence"]
+
+class AgentOutput(BaseModel):
+    """Require Qwen to return exactly the declared structured schema."""
+
+    model_config = ConfigDict(extra="forbid")
 
 
-class TriageDecision(BaseModel):
-    """First agent decision about whether an event should become an incident."""
+class InvestigationDecision(AgentOutput):
+    """Classification and evidence assessment produced by the investigator."""
 
-    decision: WorkflowDecision
+    decision: InvestigationDecisionType
     title: str
-    attack_type: str
     security_profile_id: str
-    source_ids: list[str] = Field(default_factory=list)
     severity: Severity
     confidence: float = Field(ge=0, le=1)
     affected_route: str | None = None
-    reasoning: str
+    summary: str
+    related_event_count: int = Field(ge=0)
+    notable_patterns: list[str] = Field(default_factory=list)
     evidence_used: list[str] = Field(default_factory=list)
     false_positive_considerations: list[str] = Field(default_factory=list)
     uncertainty: str
 
 
-class InvestigationSummary(BaseModel):
-    """Agent summary of related evidence and patterns around an event."""
+class ReviewDecision(AgentOutput):
+    """Independent challenge of an investigation before a report is created."""
 
-    summary: str
-    related_event_count: int = Field(ge=0)
-    notable_patterns: list[str] = Field(default_factory=list)
-    evidence_used: list[str] = Field(default_factory=list)
+    approved_for_report: bool
+    reason: str
+    evidence_gaps: list[str] = Field(default_factory=list)
 
 
-class IncidentReport(BaseModel):
-    """Plain-language incident report for a non-expert website owner."""
+class IncidentResponse(AgentOutput):
+    """Plain-language report plus one capability-safe automation decision."""
 
     executive_summary: str
     what_happened: str
+    what_is_unknown: str
     why_it_matters: str
-    recommended_next_step: str
+    action: RemediationAction
+    target: str = ""
+    reason: str
+    human_checkpoint: str = ""
 
     def as_text(self) -> str:
         """Render the structured report as readable paragraphs."""
         return (
             f"{self.executive_summary}\n\n"
             f"What happened: {self.what_happened}\n\n"
-            f"Why it matters: {self.why_it_matters}\n\n"
-            f"Recommended next step: {self.recommended_next_step}"
+            f"What remains unknown: {self.what_is_unknown}\n\n"
+            f"Why it matters: {self.why_it_matters}"
         )
 
 
-class RemediationDecision(BaseModel):
-    """Agent recommendation for the next safe remediation step."""
+class SecurityProfileContext(TypedDict):
+    """Application-owned profile data attached after Qwen selects a valid ID."""
 
-    security_profile_id: str
-    source_ids: list[str] = Field(default_factory=list)
-    action: RemediationAction
-    target: str
-    reason: str
-    requires_approval: bool
-    human_checkpoint: str
-
-
-class SupervisorDecision(BaseModel):
-    """Agent quality-control decision before incident creation."""
-
-    approved_for_incident_creation: bool
-    reason: str
+    id: str
+    name: str
+    reference_ids: list[str]
 
 
 class SecAiState(TypedDict, total=False):
-    """Shared LangGraph state passed between SecAi agent nodes."""
+    """Shared LangGraph state passed between SecAi's three roles."""
 
     event: dict[str, Any]
     job_id: int
-    triage: TriageDecision
-    investigation: InvestigationSummary
-    report: IncidentReport
-    remediation: RemediationDecision
-    supervisor: SupervisorDecision
+    investigation: InvestigationDecision
+    security_profile: SecurityProfileContext
+    review: ReviewDecision
+    response: IncidentResponse
     incident: dict[str, Any] | None

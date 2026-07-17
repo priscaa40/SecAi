@@ -2,10 +2,14 @@ from __future__ import annotations
 
 import atexit
 import json
+import selectors
 import subprocess
 import sys
 import threading
+import time
 from typing import Any
+
+from secai.settings import get_settings
 
 
 class SecurityKnowledgeMcpError(RuntimeError):
@@ -15,11 +19,12 @@ class SecurityKnowledgeMcpError(RuntimeError):
 class SecurityKnowledgeMcpClient:
     """Minimal JSON-RPC stdio client for SecAi's security knowledge MCP server."""
 
-    def __init__(self, command: list[str] | None = None):
+    def __init__(self, command: list[str] | None = None, timeout_seconds: float | None = None):
         self.command = command or [sys.executable, "-m", "secai.knowledge.security_knowledge"]
         self._process: subprocess.Popen[str] | None = None
         self._lock = threading.Lock()
         self._next_id = 1
+        self.timeout_seconds = timeout_seconds or get_settings().secai_mcp_timeout_seconds
         atexit.register(self.close)
 
     def call_tool(self, name: str, arguments: dict[str, Any] | None = None) -> Any:
@@ -66,8 +71,7 @@ class SecurityKnowledgeMcpClient:
             process.stdin.flush()
             response = self._read_response(process, request_id)
             if response.get("error"):
-                error = response["error"]
-                raise SecurityKnowledgeMcpError(str(error.get("message") or error))
+                raise SecurityKnowledgeMcpError(_error_message(response["error"]))
             return response.get("result") or {}
 
     def _ensure_process(self) -> subprocess.Popen[str]:
@@ -105,44 +109,106 @@ class SecurityKnowledgeMcpClient:
         process.stdin.flush()
         response = self._read_response(process, request_id)
         if response.get("error"):
-            error = response["error"]
-            raise SecurityKnowledgeMcpError(str(error.get("message") or error))
+            raise SecurityKnowledgeMcpError(_error_message(response["error"]))
         process.stdin.write(json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}) + "\n")
         process.stdin.flush()
 
     def _read_response(self, process: subprocess.Popen[str], request_id: int) -> dict[str, Any]:
         assert process.stdout is not None
-        while True:
+        deadline = time.monotonic() + max(0.1, self.timeout_seconds)
+        selector = selectors.DefaultSelector()
+        selector.register(process.stdout, selectors.EVENT_READ)
+        while time.monotonic() < deadline:
+            remaining = deadline - time.monotonic()
+            if not selector.select(remaining):
+                break
             line = process.stdout.readline()
             if not line:
                 stderr = process.stderr.read() if process.stderr else ""
                 self._process = None
                 raise SecurityKnowledgeMcpError(f"Security knowledge MCP server stopped unexpectedly. {stderr}".strip())
-            response = json.loads(line)
+            try:
+                response = json.loads(line)
+            except json.JSONDecodeError as exc:
+                self._stop_unhealthy_process(process)
+                raise SecurityKnowledgeMcpError("Security knowledge MCP server returned invalid JSON.") from exc
             if response.get("id") == request_id:
                 return response
+        self._stop_unhealthy_process(process)
+        raise SecurityKnowledgeMcpError(
+            f"Security knowledge MCP request timed out after {self.timeout_seconds:g} seconds."
+        )
+
+    def _stop_unhealthy_process(self, process: subprocess.Popen[str]) -> None:
+        """Discard a timed-out subprocess so the next request starts cleanly."""
+        if self._process is process:
+            self._process = None
+        try:
+            process.kill()
+            process.wait(timeout=1)
+        except Exception:
+            pass
 
 
-def _content_text(content: list[dict[str, Any]]) -> str | None:
+def _content_text(content: Any) -> str | None:
+    if isinstance(content, dict):
+        text = content.get("text")
+        return str(text) if text is not None else None
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return None
     for item in content:
-        if item.get("type") == "text":
-            return item.get("text")
+        if isinstance(item, dict) and item.get("type") == "text":
+            text = item.get("text")
+            return str(text) if text is not None else None
+        if isinstance(item, str):
+            return item
     return None
 
 
-_default_client = SecurityKnowledgeMcpClient()
+def _error_message(error: Any) -> str:
+    if isinstance(error, dict):
+        message = error.get("message")
+        if message:
+            return str(message)
+        data = error.get("data")
+        if data:
+            return str(data)
+    text = _content_text(error)
+    if text:
+        return text
+    return str(error)
+
+
+_shared_client: SecurityKnowledgeMcpClient | None = None
+_shared_client_lock = threading.Lock()
+
+
+def _client() -> SecurityKnowledgeMcpClient:
+    """Return the one process-wide MCP client used by SecAi's single analysis worker."""
+    global _shared_client
+    with _shared_client_lock:
+        if _shared_client is None:
+            _shared_client = SecurityKnowledgeMcpClient()
+        return _shared_client
 
 
 def call_tool(name: str, arguments: dict[str, Any] | None = None) -> Any:
     """Call a SecAi security knowledge tool through MCP stdio."""
-    return _default_client.call_tool(name, arguments)
+    return _client().call_tool(name, arguments)
 
 
 def list_tools() -> list[dict[str, Any]]:
     """List SecAi security knowledge tools through MCP stdio."""
-    return _default_client.list_tools()
+    return _client().list_tools()
 
 
 def close() -> None:
     """Close the shared MCP client."""
-    _default_client.close()
+    global _shared_client
+    with _shared_client_lock:
+        client = _shared_client
+        _shared_client = None
+    if client:
+        client.close()

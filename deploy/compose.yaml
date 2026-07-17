@@ -1,0 +1,27 @@
+name: secai-control
+
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    env_file:
+      - ${SECAI_ENV_FILE:-../.env}
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+    ports:
+      - "127.0.0.1:8000:8000"
+    restart: unless-stopped
+
+  dashboard:
+    build:
+      context: ..
+      dockerfile: frontend/Dockerfile
+    environment:
+      SECAI_API_BASE_URL: ${PUBLIC_BASE_URL:?PUBLIC_BASE_URL is required}
+    ports:
+      - "127.0.0.1:3000:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped

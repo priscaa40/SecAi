@@ -1,64 +1,127 @@
 from __future__ import annotations
 
 import logging
-from concurrent.futures import ThreadPoolExecutor
+import threading
 from typing import Any
 
 from secai import database
 from secai.agent.workflow import process_event
 from secai.integrations import discord
 
-
 logger = logging.getLogger(__name__)
-executor = ThreadPoolExecutor(max_workers=2)
+
+_stop_event = threading.Event()
+_wake_event = threading.Event()
+_worker: threading.Thread | None = None
+_worker_lock = threading.Lock()
+_active_job_id: int | None = None
 
 
-def shutdown_executor() -> None:
-    """Stop background analysis workers during app shutdown."""
-    executor.shutdown(wait=False)
+def start_analysis_worker() -> dict[str, int]:
+    """Recover stale work once and start the single database-backed analysis worker."""
+    global _worker
+    with _worker_lock:
+        if _worker and _worker.is_alive():
+            return {"completed": 0, "requeued": 0, "failed": 0}
+        recovered = database.requeue_stale_analysis_jobs(max_attempts=3)
+        _stop_event.clear()
+        _wake_event.set()
+        _worker = threading.Thread(target=_worker_loop, name="secai-analysis", daemon=True)
+        _worker.start()
+        return recovered
 
 
-def recover_unfinished_jobs() -> int:
-    """Resume queued or running analysis jobs after a process restart."""
-    recovered = 0
-    for job in database.list_unfinished_analysis_jobs():
-        event = database.get_event(job["event_id"])
-        if not event:
-            database.update_analysis_job(job["id"], status="failed", current_step="failed", error="Stored event is missing.")
+def stop_analysis_worker() -> bool:
+    """Ask the analysis worker to stop after its current Qwen call returns."""
+    _stop_event.set()
+    _wake_event.set()
+    worker = _worker
+    if worker and worker.is_alive():
+        worker.join(timeout=5)
+    return not bool(worker and worker.is_alive())
+
+
+def wake_analysis_worker() -> None:
+    """Wake the worker after a new queued job is committed."""
+    _wake_event.set()
+
+
+def worker_metrics() -> dict[str, Any]:
+    worker = _worker
+    return {
+        "running": bool(worker and worker.is_alive()),
+        "active_job_id": _active_job_id,
+    }
+
+
+def _worker_loop() -> None:
+    global _active_job_id
+    while not _stop_event.is_set():
+        try:
+            job = database.claim_next_analysis_job()
+        except Exception:
+            logger.exception("SecAi could not claim the next analysis job")
+            _wake_event.wait(2)
+            _wake_event.clear()
             continue
-        database.update_analysis_job(job["id"], status="queued", current_step="recovered")
-        executor.submit(run_analysis_job, event, job["id"], True)
-        recovered += 1
-    return recovered
+        if not job:
+            _wake_event.wait(2)
+            _wake_event.clear()
+            continue
+        _active_job_id = job["id"]
+        try:
+            event = database.get_event(job["event_id"])
+            if not event:
+                database.update_analysis_job(
+                    job["id"],
+                    status="failed",
+                    current_step="failed",
+                    error="Stored evidence is missing.",
+                )
+                continue
+            run_analysis_job(event, job["id"], send_notification=True)
+        except Exception:
+            logger.exception("Unexpected analysis worker failure for job %s", job["id"])
+            database.update_analysis_job(
+                job["id"],
+                status="failed",
+                current_step="failed",
+                error="The investigation could not finish. Try again from the dashboard.",
+            )
+        finally:
+            _active_job_id = None
 
 
 def run_analysis_job(
     stored_event: dict[str, Any],
     job_id: int,
     send_notification: bool = False,
-) -> tuple[dict[str, Any] | None, dict[str, str]]:
-    """Run Qwen analysis for one stored event and update job status."""
-    database.update_analysis_job(job_id, status="running", current_step="queued")
+) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+    """Run Qwen analysis for one claimed job and persist its terminal state."""
+    existing_job = database.get_analysis_job(job_id)
+    if existing_job and existing_job.get("incident_id") is not None:
+        existing_incident = database.get_incident(existing_job["incident_id"])
+        return existing_incident, {"status": "incident_created", "notified": False}
+    database.update_analysis_job(job_id, status="running", current_step="investigator")
     try:
         incident = process_event(stored_event, job_id=job_id)
     except Exception as exc:
         logger.exception("SecAi analysis failed for event %s", stored_event.get("id"))
-        status = "blocked" if is_qwen_moderation_error(exc) else "failed"
+        completed_job = database.get_analysis_job(job_id)
+        if completed_job and completed_job.get("incident_id") is not None:
+            completed_incident = database.get_incident(completed_job["incident_id"])
+            return completed_incident, {"status": "incident_created", "notified": False}
         reason = safe_analysis_error(exc)
-        database.update_analysis_job(job_id, status=status, current_step="failed", error=reason)
-        return None, {"status": status, "reason": reason}
+        database.update_analysis_job(job_id, status="failed", current_step="failed", error=reason)
+        return None, {"status": "failed", "reason": reason}
     if incident:
-        database.update_analysis_job(job_id, status="incident_created", current_step="complete", incident_id=incident["id"])
-        database.attach_qwen_usage_to_incident(job_id, incident["id"])
-        if send_notification:
-            discord.notify_incident(incident)
-        return incident, {"status": "incident_created"}
+        notified = discord.notify_incident(incident) if send_notification else False
+        return database.get_incident(incident["id"]), {"status": "incident_created", "notified": notified}
     database.update_analysis_job(job_id, status="no_incident", current_step="complete")
     return None, {"status": "no_incident"}
 
 
 def job_analysis(job: dict[str, Any]) -> dict[str, str | int | None]:
-    """Return a compact analysis status object for API responses."""
     return {
         "status": job["status"],
         "job_id": job["id"],
@@ -68,13 +131,14 @@ def job_analysis(job: dict[str, Any]) -> dict[str, str | int | None]:
 
 
 def is_qwen_moderation_error(exc: Exception) -> bool:
-    """Return whether an exception looks like a Qwen safety block."""
     text = str(exc).lower()
     return "data_inspection_failed" in text or "datainspectionfailed" in text or "ip_infringement_suspect" in text
 
 
 def safe_analysis_error(exc: Exception) -> str:
-    """Return a user-safe analysis failure message."""
+    """Return a stable public error without provider internals."""
     if is_qwen_moderation_error(exc):
-        return "Qwen Cloud safety moderation blocked this analysis. Review the event payload and try with less sensitive raw content."
-    return str(exc)[:500]
+        return "The investigation could not safely process this evidence. Review it and try again."
+    if isinstance(exc, TimeoutError):
+        return "The investigation took too long. Try again from the dashboard."
+    return "The investigation could not finish. Try again from the dashboard."

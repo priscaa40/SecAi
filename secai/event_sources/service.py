@@ -1,60 +1,84 @@
 from __future__ import annotations
 
+import hashlib
 import json
-from collections import defaultdict, deque
-from threading import Lock
-from time import time
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import HTTPException
 
 from secai import database
 from secai.agent import jobs as analysis
-from secai.integrations import discord
-from secai.settings import get_settings
 from secai.event_sources.normalizer import normalize_event
 from secai.event_sources.relevance import is_event_relevant
 from secai.models import EventIn
+from secai.security import rate_limit
+from secai.security.redaction import sanitize_event
+from secai.settings import get_settings
 
 
-_rate_limit_lock = Lock()
-_rate_limit_window: dict[str, deque[float]] = defaultdict(deque)
-
-
-def ingest_event(payload: EventIn, ingest_key: str | None) -> dict[str, Any]:
+def ingest_event(payload: EventIn, ingest_key: str | None, request_ip: str = "unknown") -> dict[str, Any]:
     """Verify, store, and analyze one incoming event."""
     if not database.verify_ingest_key(payload.site_id, ingest_key):
         raise HTTPException(status_code=401, detail="Invalid site_id or ingest key")
     enforce_event_limits(payload)
-    enforce_rate_limit(payload.site_id, payload.ip)
+    enforce_rate_limit(payload.site_id, request_ip)
 
-    event = normalize_event(payload.model_dump())
+    event = sanitize_event(normalize_event(payload.model_dump()))
     if not is_event_relevant(event):
         return ignored_event_result(event)
 
-    stored_event = database.insert_event(event)
-    if stored_event.pop("_deduplicated", False):
-        existing_job = database.get_analysis_job_for_event(stored_event["id"])
+    result = store_and_queue_event(event)
+    stored_event = result["event"]
+    if result["status"] in {"deduplicated", "correlated"}:
         return {
             "event": stored_event,
             "incident": None,
             "notified": False,
-            "analysis": {"status": "deduplicated", "reason": "event_already_ingested", "source": event.get("source")},
-            "analysis_job": existing_job,
+            "analysis": {"status": result["status"], "reason": result["reason"], "source": event.get("source")},
+            "analysis_job": result.get("job"),
         }
-    job = database.create_analysis_job(stored_event["id"], stored_event["site_id"])
-    if get_settings().secai_analysis_mode == "background":
-        analysis.executor.submit(analysis.run_analysis_job, stored_event, job["id"], True)
-        return {"event": stored_event, "incident": None, "notified": False, "analysis": analysis.job_analysis(job), "analysis_job": job}
-    incident, result = analysis.run_analysis_job(stored_event, job["id"])
-    notified = discord.notify_incident(incident) if incident else False
+    job = result["job"]
     return {
         "event": stored_event,
-        "incident": incident,
-        "notified": notified,
-        "analysis": result,
-        "analysis_job": database.get_analysis_job(job["id"]),
+        "incident": None,
+        "notified": False,
+        "analysis": analysis.job_analysis(job),
+        "analysis_job": job,
     }
+
+
+def store_and_queue_event(event: dict[str, Any]) -> dict[str, Any]:
+    """Persist one bounded evidence candidate and durably queue its Qwen analysis."""
+    event = sanitize_event(event)
+    if event.get("source") == "browser":
+        event["event_fingerprint"] = _browser_minute_fingerprint(event)
+    stored_event = database.insert_event(event)
+    if stored_event.pop("_deduplicated", False):
+        return {
+            "status": "deduplicated",
+            "reason": "event_already_ingested",
+            "event": stored_event,
+            "job": database.get_analysis_job_for_event(stored_event["id"]),
+        }
+    job = database.create_analysis_job(stored_event["id"], stored_event["site_id"])
+    analysis.wake_analysis_worker()
+    return {"status": "queued", "event": stored_event, "job": job}
+
+
+def _browser_minute_fingerprint(event: dict[str, Any]) -> str:
+    """Coalesce one form's repeated browser warnings for one minute."""
+    metadata = event.get("metadata") or {}
+    identity = {
+        "site_id": event.get("site_id"),
+        "event_type": event.get("event_type"),
+        "path": event.get("path"),
+        "form_key": metadata.get("form_key"),
+        "signals": sorted(event.get("signals") or []),
+        "minute": int(datetime.now(UTC).timestamp() // 60),
+    }
+    encoded = json.dumps(identity, sort_keys=True, separators=(",", ":"))
+    return f"browser:{hashlib.sha256(encoded.encode('utf-8')).hexdigest()}"
 
 
 def ignored_event_result(event: dict[str, Any]) -> dict[str, Any]:
@@ -78,18 +102,9 @@ def enforce_event_limits(payload: EventIn) -> None:
         raise HTTPException(status_code=413, detail="Event payload is too large")
 
 
-def enforce_rate_limit(site_id: str, ip: str | None) -> None:
-    """Apply simple in-memory rate limits for event ingest."""
-    now = time()
-    keys = [f"site:{site_id}"]
-    if ip:
-        keys.append(f"ip:{ip}")
-    with _rate_limit_lock:
-        for key in keys:
-            bucket = _rate_limit_window[key]
-            while bucket and now - bucket[0] > 60:
-                bucket.popleft()
-            limit = 120 if key.startswith("site:") else 60
-            if len(bucket) >= limit:
-                raise HTTPException(status_code=429, detail="Rate limit exceeded")
-            bucket.append(now)
+def enforce_rate_limit(site_id: str, request_ip: str) -> None:
+    """Apply shared limits using the network peer, never the attacker-supplied event IP."""
+    buckets = ((f"ingest:site:{site_id}", 120), (f"ingest:client:{request_ip or 'unknown'}", 60))
+    for key, limit in buckets:
+        if not rate_limit.consume(key, limit, 60):
+            raise HTTPException(status_code=429, detail="Rate limit exceeded")

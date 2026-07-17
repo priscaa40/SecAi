@@ -14,7 +14,10 @@ def signup(email: str, password: str) -> dict:
     normalized_email = email.strip().lower()
     if database.get_user_by_email(normalized_email):
         raise HTTPException(status_code=409, detail="An account already exists for this email.")
-    user = database.create_user(normalized_email, hash_password(password))
+    try:
+        user = database.create_user(normalized_email, hash_password(password))
+    except database.INTEGRITY_ERRORS as exc:
+        raise HTTPException(status_code=409, detail="An account already exists for this email.") from exc
     session = database.create_session(user["id"])
     return {"token": session["token"], "user": _public_user(user)}
 

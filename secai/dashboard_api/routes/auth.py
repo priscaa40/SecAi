@@ -1,24 +1,26 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 
 from secai.dashboard_api import auth_service
 from secai.dashboard_api.dependencies import current_user, session_token
+from secai.dashboard_api.rate_limit import enforce_request_rate
 from secai.models import AuthLoginIn, AuthOut, AuthSignupIn
-
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
 @router.post("/signup", response_model=AuthOut)
-def signup(payload: AuthSignupIn) -> dict:
+def signup(request: Request, payload: AuthSignupIn) -> dict:
     """Create a website owner account."""
+    enforce_request_rate(request, "signup", 10, 3600)
     return auth_service.signup(payload.email, payload.password)
 
 
 @router.post("/login", response_model=AuthOut)
-def login(payload: AuthLoginIn) -> dict:
+def login(request: Request, payload: AuthLoginIn) -> dict:
     """Log in a website owner."""
+    enforce_request_rate(request, "login", 10, 60)
     return auth_service.login(payload.email, payload.password)
 
 

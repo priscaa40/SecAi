@@ -2,364 +2,19 @@ from __future__ import annotations
 
 import json
 import os
+import sys
+from collections.abc import Callable
+from typing import Any
 from urllib.error import URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
-import sys
-from typing import Any, Callable
 
-
-OFFICIAL_SOURCE_URLS = {
-    "CAPEC": "https://capec.mitre.org/data/downloads.html",
-    "CWE": "https://cwe.mitre.org/data/downloads.html",
-    "NIST": "https://nvd.nist.gov/developers/vulnerabilities",
-    "OSV": "https://google.github.io/osv.dev/api/",
-    "OWASP_AUTOMATED_THREATS": "https://owasp.org/www-project-automated-threats-to-web-applications/",
-    "OWASP_CHEAT_SHEETS": "https://owasp.org/www-project-cheat-sheets/",
-}
-
-SERVER_INFO = {"name": "secai-security-knowledge", "version": "0.1.0"}
-
-MCP_TOOLS: dict[str, dict[str, Any]] = {
-    "list_security_profiles": {
-        "description": "Return source-backed SecAi security profiles.",
-        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
-    },
-    "lookup_security_profile": {
-        "description": "Return one source-backed SecAi security profile by ID.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {"entry_id": {"type": "string"}},
-            "required": ["entry_id"],
-            "additionalProperties": False,
-        },
-    },
-    "find_matching_security_profiles": {
-        "description": "Return likely SecAi security profiles for a serialized event JSON object.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {"event": {"type": "object"}, "limit": {"type": "integer", "minimum": 1, "maximum": 10}},
-            "required": ["event"],
-            "additionalProperties": False,
-        },
-    },
-    "get_remediation_options": {
-        "description": "Return allowed remediation options for a source-backed SecAi security profile.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {"entry_id": {"type": "string"}},
-            "required": ["entry_id"],
-            "additionalProperties": False,
-        },
-    },
-    "search_nvd_vulnerabilities": {
-        "description": "Search the official NVD CVE API for current vulnerability context.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "keyword": {"type": "string"},
-                "cwe_id": {"type": "string"},
-                "limit": {"type": "integer", "minimum": 1, "maximum": 20},
-            },
-            "additionalProperties": False,
-        },
-    },
-    "query_osv_package_vulnerabilities": {
-        "description": "Query the official OSV API for package vulnerability context.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "ecosystem": {"type": "string"},
-                "package": {"type": "string"},
-                "version": {"type": "string"},
-            },
-            "required": ["ecosystem", "package"],
-            "additionalProperties": False,
-        },
-    },
-}
-
-
-SECURITY_PROFILES: list[dict[str, Any]] = [
-    {
-        "id": "sql_injection_attempt",
-        "name": "SQL injection attempt",
-        "sources": ["CAPEC:66", "CWE:89", "OWASP:SQL_INJECTION_CHEAT_SHEET", "OWASP:TOP_10_INJECTION"],
-        "what_it_means": "An input appears to be trying to alter a database query.",
-        "evidence_signs": [
-            "SQL operators or comment syntax in query/body",
-            "database error messages after unusual input",
-            "repeated probing of parameterized routes",
-        ],
-        "confidence_boosters": [
-            "same IP tries multiple SQL-like payloads",
-            "payload appears in query parameters or form fields",
-            "server errors follow SQL-like input",
-        ],
-        "false_positive_cautions": [
-            "search boxes and admin tools may contain technical text legitimately",
-            "developer documentation pages may contain SQL examples",
-        ],
-        "safe_recommendations": [
-            "review the affected route",
-            "use parameterized queries",
-            "validate inputs server-side",
-            "apply a temporary WAF virtual patch after approval",
-        ],
-        "allowed_actions": ["monitor", "notify_admin", "block_ip", "block_ip_range", "rate_limit_ip", "rate_limit_route", "block_payload_pattern", "virtual_patch"],
-        "requires_approval": ["block_ip", "block_ip_range", "rate_limit_ip", "rate_limit_route", "block_payload_pattern", "virtual_patch"],
-        "user_explanation": "Someone may be trying to make your app run database commands through a normal input field.",
-    },
-    {
-        "id": "cross_site_scripting_attempt",
-        "name": "Cross-site scripting attempt",
-        "sources": ["CAPEC:63", "CWE:79", "OWASP:XSS_PREVENTION_CHEAT_SHEET", "OWASP:TOP_10_INJECTION"],
-        "what_it_means": "An input appears to be trying to inject JavaScript or HTML into a page.",
-        "evidence_signs": [
-            "script tags or JavaScript URLs in query/body",
-            "HTML event handlers such as onerror or onload",
-            "payload submitted to comments, profiles, search, or contact forms",
-        ],
-        "confidence_boosters": [
-            "payload is reflected in a response",
-            "same source repeats script-like payloads",
-            "target route accepts user-generated content",
-        ],
-        "false_positive_cautions": [
-            "developer docs, CMS editors, and code samples may legitimately include HTML or JavaScript",
-        ],
-        "safe_recommendations": [
-            "review where the input is rendered",
-            "encode output by context",
-            "sanitize rich text inputs",
-            "apply a temporary payload-blocking rule after approval",
-        ],
-        "allowed_actions": ["monitor", "notify_admin", "block_ip", "block_ip_range", "rate_limit_ip", "rate_limit_route", "block_payload_pattern", "virtual_patch"],
-        "requires_approval": ["block_ip", "block_ip_range", "rate_limit_ip", "rate_limit_route", "block_payload_pattern", "virtual_patch"],
-        "user_explanation": "Someone may be trying to inject browser code into a page viewed by you or your users.",
-    },
-    {
-        "id": "path_traversal_attempt",
-        "name": "Path traversal attempt",
-        "sources": ["CAPEC:126", "CWE:22", "OWASP:INPUT_VALIDATION_CHEAT_SHEET"],
-        "what_it_means": "A request appears to be trying to access files outside the intended directory.",
-        "evidence_signs": [
-            "../ or ..\\ sequences in path/query",
-            "references to sensitive files such as /etc/passwd or boot.ini",
-            "download or file-view routes receive unusual file paths",
-        ],
-        "confidence_boosters": [
-            "target route handles files",
-            "multiple encoded traversal attempts from the same source",
-            "403 or 500 responses after traversal payloads",
-        ],
-        "false_positive_cautions": [
-            "some support tickets or documentation pages may include path examples",
-        ],
-        "safe_recommendations": [
-            "review file access controls",
-            "normalize and constrain file paths",
-            "use allow-listed file identifiers",
-            "apply a temporary WAF virtual patch after approval",
-        ],
-        "allowed_actions": ["monitor", "notify_admin", "block_ip", "block_ip_range", "rate_limit_ip", "rate_limit_route", "block_payload_pattern", "virtual_patch", "disable_route"],
-        "requires_approval": ["block_ip", "block_ip_range", "rate_limit_ip", "rate_limit_route", "block_payload_pattern", "virtual_patch", "disable_route"],
-        "user_explanation": "Someone may be trying to read files your website should never expose.",
-    },
-    {
-        "id": "credential_stuffing_or_cracking",
-        "name": "Credential stuffing or credential cracking",
-        "sources": ["OWASP:OAT_007", "OWASP:OAT_008", "OWASP:CREDENTIAL_STUFFING_CHEAT_SHEET", "NIST:SP_800_61"],
-        "what_it_means": "Automated login attempts may be testing stolen or guessed credentials.",
-        "evidence_signs": [
-            "many failed login attempts",
-            "many accounts tried from one source",
-            "same account tried from many sources",
-            "automation-like user agents on authentication routes",
-        ],
-        "confidence_boosters": [
-            "high failure rate over a short time window",
-            "repeated attempts on /login or /auth routes",
-            "successful login after many failures",
-        ],
-        "false_positive_cautions": [
-            "a real user may mistype a password several times",
-            "company VPNs can make many users appear from one IP",
-        ],
-        "safe_recommendations": [
-            "rate-limit the login route",
-            "notify affected users after review",
-            "encourage MFA",
-            "challenge suspicious login traffic after approval",
-        ],
-        "allowed_actions": ["monitor", "notify_admin", "block_ip", "block_ip_range", "rate_limit_ip", "rate_limit_route", "challenge_route"],
-        "requires_approval": ["block_ip", "block_ip_range", "rate_limit_ip", "rate_limit_route", "challenge_route"],
-        "user_explanation": "Someone may be using automation to try passwords against your login page.",
-    },
-    {
-        "id": "bot_scraping",
-        "name": "Bot scraping",
-        "sources": ["OWASP:OAT_011", "OWASP:AUTOMATED_THREATS"],
-        "what_it_means": "Automated clients may be collecting content or data from the site.",
-        "evidence_signs": [
-            "high request volume across many pages",
-            "automation-like user agent",
-            "low think time between requests",
-            "repeated access to list/search pages",
-        ],
-        "confidence_boosters": [
-            "many sequential pages requested quickly",
-            "same source ignores normal navigation patterns",
-        ],
-        "false_positive_cautions": [
-            "search engine crawlers and uptime monitors can look automated",
-        ],
-        "safe_recommendations": [
-            "verify whether the client is a legitimate crawler",
-            "rate-limit high-volume routes",
-            "challenge automated traffic after approval",
-        ],
-        "allowed_actions": ["monitor", "notify_admin", "rate_limit_ip", "rate_limit_route", "challenge_route", "block_ip"],
-        "requires_approval": ["rate_limit_ip", "rate_limit_route", "challenge_route", "block_ip"],
-        "user_explanation": "Automated traffic may be copying pages or data from your site.",
-    },
-    {
-        "id": "contact_form_spam",
-        "name": "Contact-form spam",
-        "sources": ["OWASP:OAT_017", "OWASP:AUTOMATED_THREATS"],
-        "what_it_means": "Automated clients may be submitting unwanted content through forms.",
-        "evidence_signs": [
-            "many form submissions in a short window",
-            "spam-like content or repeated messages",
-            "automation-like user agent",
-        ],
-        "confidence_boosters": [
-            "same IP submits repeated messages",
-            "many failed or low-quality submissions target the same form",
-        ],
-        "false_positive_cautions": [
-            "marketing campaigns can create sudden legitimate contact spikes",
-        ],
-        "safe_recommendations": [
-            "monitor submissions",
-            "add server-side validation",
-            "rate-limit form endpoint after approval",
-            "challenge or temporarily block abusive form traffic after approval",
-        ],
-        "allowed_actions": ["monitor", "notify_admin", "rate_limit_ip", "rate_limit_route", "block_payload_pattern", "challenge_route", "block_ip"],
-        "requires_approval": ["rate_limit_ip", "rate_limit_route", "block_payload_pattern", "challenge_route", "block_ip"],
-        "user_explanation": "Automated traffic may be abusing your contact or signup forms.",
-    },
-    {
-        "id": "vulnerability_scanning_or_probing",
-        "name": "Vulnerability scanning or probing",
-        "sources": ["OWASP:OAT_014", "CAPEC:310", "NIST:SP_800_61"],
-        "what_it_means": "A client appears to be exploring the app to identify weaknesses.",
-        "evidence_signs": [
-            "requests for many uncommon paths",
-            "probing admin, config, backup, or framework-specific routes",
-            "many 404/403 responses from one source",
-        ],
-        "confidence_boosters": [
-            "broad route coverage in a short window",
-            "known scanner user agent",
-            "attempts to access sensitive filenames",
-        ],
-        "false_positive_cautions": [
-            "security tools run by the owner can look like probing",
-            "broken links can produce many 404s",
-        ],
-        "safe_recommendations": [
-            "review requested paths",
-            "hide sensitive files",
-            "enable anti-scan protection after approval",
-            "temporarily block abusive source IP after approval",
-        ],
-        "allowed_actions": ["monitor", "notify_admin", "enable_anti_scan", "block_ip", "block_ip_range", "rate_limit_ip", "rate_limit_route"],
-        "requires_approval": ["enable_anti_scan", "block_ip", "block_ip_range", "rate_limit_ip", "rate_limit_route"],
-        "user_explanation": "Someone may be mapping your site looking for weak spots.",
-    },
-    {
-        "id": "server_error_spike",
-        "name": "Server error spike",
-        "sources": ["NIST:SP_800_61", "OWASP:LOGGING_CHEAT_SHEET"],
-        "what_it_means": "A route or source is associated with unusual server errors.",
-        "evidence_signs": [
-            "multiple 500-level responses",
-            "errors cluster around one route",
-            "errors follow unusual payloads or request sizes",
-        ],
-        "confidence_boosters": [
-            "sudden increase from normal baseline",
-            "same route fails repeatedly",
-            "error follows suspicious input",
-        ],
-        "false_positive_cautions": [
-            "deployments, outages, or dependency failures can cause benign spikes",
-        ],
-        "safe_recommendations": [
-            "notify admin",
-            "review logs for stack traces",
-            "rate-limit or temporarily disable the affected route after approval",
-        ],
-        "allowed_actions": ["monitor", "notify_admin", "rate_limit_route", "read_only_route", "disable_route"],
-        "requires_approval": ["rate_limit_route", "read_only_route", "disable_route"],
-        "user_explanation": "A part of your site is failing more than expected and needs review.",
-    },
-    {
-        "id": "suspicious_authentication_failure_burst",
-        "name": "Suspicious authentication failure burst",
-        "sources": ["OWASP:CREDENTIAL_STUFFING_CHEAT_SHEET", "NIST:SP_800_61"],
-        "what_it_means": "Authentication failures are clustered enough to deserve review.",
-        "evidence_signs": [
-            "several failed login attempts",
-            "failures target one account or one route",
-            "failures cluster around one IP or user agent",
-        ],
-        "confidence_boosters": [
-            "burst is higher than normal",
-            "multiple accounts are targeted",
-            "same source repeats attempts",
-        ],
-        "false_positive_cautions": [
-            "one real user may be locked out",
-            "shared networks can group legitimate users under one IP",
-        ],
-        "safe_recommendations": [
-            "monitor",
-            "notify admin",
-            "rate-limit or challenge login route after approval",
-        ],
-        "allowed_actions": ["monitor", "notify_admin", "rate_limit_route", "challenge_route"],
-        "requires_approval": ["rate_limit_route", "challenge_route"],
-        "user_explanation": "Login failures are clustered in a way that may indicate abuse.",
-    },
-    {
-        "id": "unknown_suspicious_activity",
-        "name": "Unknown suspicious activity",
-        "sources": ["NIST:SP_800_61"],
-        "what_it_means": "The evidence is unusual but does not clearly match a known SecAi security profile.",
-        "evidence_signs": [
-            "unusual activity that does not map cleanly to another entry",
-            "connector-provided hints are weak or conflicting",
-        ],
-        "confidence_boosters": [
-            "repeat activity from same source",
-            "activity affects sensitive routes",
-        ],
-        "false_positive_cautions": [
-            "insufficient context can make normal behavior look suspicious",
-        ],
-        "safe_recommendations": [
-            "request more evidence",
-            "monitor",
-            "notify admin",
-        ],
-        "allowed_actions": ["monitor", "notify_admin"],
-        "requires_approval": [],
-        "user_explanation": "SecAi noticed something unusual, but more evidence is needed before naming it.",
-    },
-]
+from secai.knowledge.security_knowledge_data import (
+    MCP_TOOLS,
+    OFFICIAL_SOURCE_URLS,
+    SECURITY_PROFILES,
+    SERVER_INFO,
+)
 
 
 def list_entries() -> list[dict[str, Any]]:
@@ -373,22 +28,6 @@ def get_entry(entry_id: str) -> dict[str, Any] | None:
         if entry["id"] == entry_id:
             return _with_source_metadata(entry)
     return None
-
-
-def valid_entry_ids() -> set[str]:
-    """Return every allowed security profile ID."""
-    return {entry["id"] for entry in SECURITY_PROFILES}
-
-
-def valid_source_ids(entry_id: str) -> set[str]:
-    """Return the approved source IDs for one security profile."""
-    entry = get_entry(entry_id)
-    return set(entry["sources"]) if entry else set()
-
-
-def valid_attack_names() -> set[str]:
-    """Return every attack name the agent is allowed to use."""
-    return {entry["name"] for entry in SECURITY_PROFILES}
 
 
 def find_matching_entries(event: dict[str, Any], limit: int = 5) -> list[dict[str, Any]]:
@@ -406,7 +45,7 @@ def find_matching_entries(event: dict[str, Any], limit: int = 5) -> list[dict[st
     scored: list[tuple[int, dict[str, Any]]] = []
     for entry in SECURITY_PROFILES:
         score = 0
-        for field in ("name", "what_it_means", "user_explanation"):
+        for field in ("name", "what_it_means"):
             if any(token in haystack for token in str(entry[field]).lower().split()):
                 score += 1
         for sign in entry["evidence_signs"]:
@@ -420,22 +59,6 @@ def find_matching_entries(event: dict[str, Any], limit: int = 5) -> list[dict[st
     if not scored:
         return [_public_entry(get_entry("unknown_suspicious_activity"))]
     return [_public_entry(entry) for _, entry in scored[:limit]]
-
-
-def remediation_options(entry_id: str) -> dict[str, Any] | None:
-    """Return safe remediation choices for one security profile."""
-    entry = get_entry(entry_id)
-    if not entry:
-        return None
-    return {
-        "id": entry["id"],
-        "name": entry["name"],
-        "sources": entry["sources"],
-        "safe_recommendations": entry["safe_recommendations"],
-        "allowed_actions": entry["allowed_actions"],
-        "requires_approval": entry["requires_approval"],
-        "false_positive_cautions": entry["false_positive_cautions"],
-    }
 
 
 def search_nvd(keyword: str | None = None, cwe_id: str | None = None, limit: int = 5) -> dict[str, Any]:
@@ -458,9 +81,9 @@ def search_nvd(keyword: str | None = None, cwe_id: str | None = None, limit: int
                 "published": cve.get("published"),
                 "last_modified": cve.get("lastModified"),
                 "descriptions": cve.get("descriptions", [])[:2],
-                "weaknesses": cve.get("weaknesses", []),
+                "weaknesses": cve.get("weaknesses", [])[:5],
                 "metrics": metrics,
-                "references": cve.get("references", {}).get("referenceData", [])[:5],
+                "references": cve.get("references", [])[:5],
             }
         )
     return {
@@ -478,11 +101,24 @@ def query_osv(ecosystem: str, package: str, version: str | None = None) -> dict[
     if version:
         payload["version"] = version
     data = _post_json("https://api.osv.dev/v1/query", payload)
+    vulnerabilities = []
+    for vulnerability in data.get("vulns", [])[:20]:
+        vulnerabilities.append(
+            {
+                "id": vulnerability.get("id"),
+                "summary": str(vulnerability.get("summary") or "")[:1000],
+                "details": str(vulnerability.get("details") or "")[:2000],
+                "aliases": vulnerability.get("aliases", [])[:10],
+                "modified": vulnerability.get("modified"),
+                "published": vulnerability.get("published"),
+                "references": vulnerability.get("references", [])[:5],
+            }
+        )
     return {
         "source": "OSV",
         "url": OFFICIAL_SOURCE_URLS["OSV"],
         "query": payload,
-        "vulnerabilities": data.get("vulns", []),
+        "vulnerabilities": vulnerabilities,
     }
 
 
@@ -491,9 +127,12 @@ def call_tool(name: str | None, arguments: dict[str, Any] | None = None) -> Any:
     args = arguments or {}
     handlers: dict[str, Callable[[dict[str, Any]], Any]] = {
         "list_security_profiles": lambda params: list_entries(),
-        "lookup_security_profile": lambda params: get_entry(params["entry_id"]) or {"error": "unknown security profile"},
-        "find_matching_security_profiles": lambda params: find_matching_entries(params["event"], limit=params.get("limit", 5)),
-        "get_remediation_options": lambda params: remediation_options(params["entry_id"]) or {"error": "unknown security profile"},
+        "lookup_security_profile": lambda params: (
+            get_entry(params["entry_id"]) or {"error": "unknown security profile"}
+        ),
+        "find_matching_security_profiles": lambda params: find_matching_entries(
+            params["event"], limit=params.get("limit", 5)
+        ),
         "search_nvd_vulnerabilities": lambda params: search_nvd(
             keyword=params.get("keyword"),
             cwe_id=params.get("cwe_id"),
@@ -542,7 +181,10 @@ def handle_message(message: dict[str, Any]) -> dict[str, Any] | None:
         if method == "tools/call":
             params = message.get("params") or {}
             payload = call_tool(params.get("name"), params.get("arguments") or {})
-            return _result(request_id, {"content": [{"type": "text", "text": json.dumps(payload, default=str)}], "isError": False})
+            return _result(
+                request_id,
+                {"content": [{"type": "text", "text": json.dumps(payload, default=str)}], "isError": False},
+            )
         return _error(request_id, -32601, f"Unknown method: {method}")
     except Exception as exc:
         return _error(request_id, -32000, str(exc))
@@ -560,10 +202,6 @@ def _public_entry(entry: dict[str, Any] | None) -> dict[str, Any]:
         "evidence_signs": entry["evidence_signs"],
         "confidence_boosters": entry["confidence_boosters"],
         "false_positive_cautions": entry["false_positive_cautions"],
-        "safe_recommendations": entry["safe_recommendations"],
-        "allowed_actions": entry["allowed_actions"],
-        "requires_approval": entry["requires_approval"],
-        "user_explanation": entry["user_explanation"],
         "source_urls": source_urls(entry["sources"]),
     }
 

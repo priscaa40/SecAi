@@ -1,35 +1,76 @@
 from __future__ import annotations
 
-import logging
+from dataclasses import replace
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from secai import database
-from secai.dashboard_api.dependencies import current_user_email, ensure_site_owner
-from secai.database import encryption
-from secai.settings import get_settings
-from secai.agent import jobs as analysis
-from secai.integrations import discord
-from secai.integrations import alibaba_autopilot
+from secai.dashboard_api.dependencies import (
+    current_user_email,
+    ensure_site_owner,
+    is_judge_owner,
+    protect_judge_configuration,
+)
+from secai.dashboard_api.rate_limit import enforce_request_rate
 from secai.event_sources import alibaba_sls
+from secai.event_sources.scheduler import ingest_sls_events
+from secai.integrations import alibaba_autopilot, alibaba_coordinates, alibaba_credentials, discord
+from secai.integrations import alibaba_resources as alibaba_resource_service
 from secai.models import (
     AlibabaAutopilotConfigIn,
-    AlibabaSlsConfigIn,
+    AlibabaConnectionVerifyIn,
+    AlibabaResourceDiscoveryIn,
     AlibabaSlsPullIn,
-    RemediationPreferenceIn,
     SiteCreate,
     SiteOut,
 )
 
-
 router = APIRouter(prefix="/api/sites", tags=["sites"])
-logger = logging.getLogger(__name__)
+
+
+@router.delete("/{site_id}")
+def delete_site(site_id: str, user_email: str = Depends(current_user_email)) -> dict[str, str]:
+    """Permanently delete an owned site and all SecAi data attached to it."""
+    ensure_site_owner(site_id, user_email)
+    protect_judge_configuration(site_id, user_email)
+    if _policy_that_blocks_cloud_changes(site_id):
+        raise HTTPException(
+            status_code=409,
+            detail="Remove the website's active protection before deleting it.",
+        )
+    database.delete_site(site_id)
+    alibaba_credentials.invalidate_assumed_role_cache()
+    return {"status": "deleted", "site_id": site_id}
+
+
+@router.post("/{site_id}/rotate-ingest-key")
+def rotate_ingest_key(site_id: str, user_email: str = Depends(current_user_email)) -> dict[str, str]:
+    """Rotate a site's browser ingest credential."""
+    ensure_site_owner(site_id, user_email)
+    protect_judge_configuration(site_id, user_email)
+    return {"site_id": site_id, "ingest_key": database.rotate_site_ingest_key(site_id)}
+
+
+@router.post("/{site_id}/discord-setup")
+def create_discord_setup(site_id: str, user_email: str = Depends(current_user_email)) -> dict[str, str]:
+    """Create or replace the one-time Discord binding for an owned website."""
+    ensure_site_owner(site_id, user_email)
+    protect_judge_configuration(site_id, user_email)
+    if readiness_error := discord.setup_readiness_error():
+        raise HTTPException(status_code=503, detail=readiness_error)
+    try:
+        discord.verify_application_configuration()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return discord.create_channel_setup(site_id)
 
 
 @router.post("", response_model=SiteOut)
 def create_site(payload: SiteCreate, user_email: str = Depends(current_user_email)) -> dict[str, Any]:
     """Create a monitored site and return its ingest credentials."""
+    if is_judge_owner(user_email):
+        raise HTTPException(status_code=403, detail="The public judge account is limited to the isolated judge site.")
     return database.create_site(payload.name, user_email)
 
 
@@ -39,122 +80,92 @@ def list_sites(user_email: str = Depends(current_user_email)) -> dict[str, Any]:
     return {"sites": database.list_sites(user_email)}
 
 
-@router.get("/{site_id}/remediation-preferences")
-def remediation_preferences(site_id: str, user_email: str = Depends(current_user_email)) -> dict[str, Any]:
-    """List which remediation actions require approval for a site."""
-    ensure_site_owner(site_id, user_email)
-    return {
-        "site_id": site_id,
-        "default": "requires_approval",
-        "preferences": database.list_remediation_preferences(site_id),
-    }
-
-
-@router.put("/{site_id}/remediation-preferences")
-def set_remediation_preference(
-    site_id: str,
-    payload: RemediationPreferenceIn,
-    user_email: str = Depends(current_user_email),
-) -> dict[str, Any]:
-    """Set whether one remediation action can run automatically."""
-    ensure_site_owner(site_id, user_email)
-    preference = database.set_remediation_preference(site_id, payload.action, payload.requires_approval)
-    return {"preference": preference}
-
-
-@router.put("/{site_id}/alibaba-sls")
-def save_alibaba_sls_config(
-    site_id: str,
-    payload: AlibabaSlsConfigIn,
-    user_email: str = Depends(current_user_email),
-) -> dict[str, Any]:
-    """Save Alibaba SLS settings for an owned site."""
-    ensure_site_owner(site_id, user_email)
-    config = database.save_sls_config(
-        site_id,
-        {
-            "endpoint": payload.endpoint.strip(),
-            "project": payload.project.strip(),
-            "logstore": payload.logstore.strip(),
-            "role_arn": payload.role_arn.strip(),
-            "encrypted_external_id": encryption.encrypt_secret(payload.external_id),
-        },
-    )
-    alibaba_sls.invalidate_cache(site_id)
-    return {"config": _public_sls_config(config)}
-
-
-@router.get("/{site_id}/alibaba-sls")
-def get_alibaba_sls_config(site_id: str, user_email: str = Depends(current_user_email)) -> dict[str, Any]:
-    """Return masked Alibaba SLS settings for an owned site."""
-    ensure_site_owner(site_id, user_email)
-    config = database.get_sls_config(site_id)
-    return {"configured": bool(config), "config": _public_sls_config(config) if config else None}
-
-
 @router.put("/{site_id}/alibaba-autopilot")
 def save_alibaba_autopilot_config(
     site_id: str,
     payload: AlibabaAutopilotConfigIn,
     user_email: str = Depends(current_user_email),
 ) -> dict[str, Any]:
-    """Save Alibaba Autopilot settings for no-code log detection and WAF enforcement."""
+    """Save Alibaba Autopilot settings for no-code log detection and security group enforcement."""
     ensure_site_owner(site_id, user_email)
-    if payload.enforcement_mode == "waf_enforced" and not payload.waf_instance_id:
-        raise HTTPException(status_code=400, detail="Alibaba WAF instance ID is required for Autopilot enforcement.")
+    protect_judge_configuration(site_id, user_email)
+    security_group_id = payload.security_group_id.strip() if payload.security_group_id else None
+    if payload.enforcement_mode == "security_group" and not security_group_id:
+        raise HTTPException(
+            status_code=400, detail="Alibaba ECS security group ID is required for Autopilot enforcement."
+        )
     has_partial_sls = any([payload.sls_endpoint, payload.sls_project, payload.sls_logstore])
     has_complete_sls = all([payload.sls_endpoint, payload.sls_project, payload.sls_logstore])
     if has_partial_sls and not has_complete_sls:
-        raise HTTPException(status_code=400, detail="Log Service endpoint, project, and logstore are all required when connecting logs.")
+        raise HTTPException(
+            status_code=400, detail="Log Service endpoint, project, and logstore are all required when connecting logs."
+        )
+    try:
+        region = alibaba_coordinates.normalize_region(payload.region)
+        if has_complete_sls:
+            assert payload.sls_endpoint is not None
+            alibaba_coordinates.validate_sls_endpoint(region, payload.sls_endpoint)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    saved = database.get_alibaba_autopilot_config(site_id)
+    if not saved or saved.get("connection_status") != "verified":
+        raise HTTPException(status_code=400, detail="Verify this website's Alibaba Cloud role first.")
+    provider_coordinates_changed = bool(
+        saved
+        and (
+            saved["region"] != region
+            or saved.get("security_group_id") != security_group_id
+            or saved["enforcement_mode"] != payload.enforcement_mode
+        )
+    )
+    if provider_coordinates_changed and _policy_that_blocks_cloud_changes(site_id):
+        raise HTTPException(
+            status_code=409,
+            detail="Remove the website's active protection before changing its cloud connection.",
+        )
 
-    existing = database.get_alibaba_autopilot_config(site_id)
-    external_id = payload.external_id.strip() if payload.external_id else ""
-    if external_id and not external_id.startswith("****"):
-        encrypted_external_id = encryption.encrypt_secret(external_id)
-    elif existing:
-        encrypted_external_id = existing["encrypted_external_id"]
-    else:
-        raise HTTPException(status_code=400, detail="External ID is required the first time Alibaba Autopilot is connected.")
-    waf_instance_id = payload.waf_instance_id.strip() if payload.waf_instance_id else None
-    waf_template_id = (
-        existing.get("waf_template_id")
-        if existing and existing.get("waf_instance_id") == waf_instance_id
-        else None
-    )
-    config = database.save_alibaba_autopilot_config(
-        site_id,
-        {
-            "role_arn": payload.role_arn.strip(),
-            "encrypted_external_id": encrypted_external_id,
-            "region": payload.region.strip(),
-            "waf_instance_id": waf_instance_id,
-            "waf_domain": payload.waf_domain.strip() if payload.waf_domain else None,
-            "waf_template_id": waf_template_id,
-            "sls_endpoint": payload.sls_endpoint.strip() if payload.sls_endpoint else None,
-            "sls_project": payload.sls_project.strip() if payload.sls_project else None,
-            "sls_logstore": payload.sls_logstore.strip() if payload.sls_logstore else None,
-            "enforcement_mode": payload.enforcement_mode,
-        },
-    )
-    if has_complete_sls:
-        database.save_sls_config(
+    connection = replace(alibaba_autopilot.load_site_connection(site_id), region=region)
+    try:
+        resources = alibaba_resource_service.discover(connection, region)
+    except alibaba_resource_service.AlibabaResourceDiscoveryError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    sls_endpoint = payload.sls_endpoint.strip() if payload.sls_endpoint else None
+    sls_project = payload.sls_project.strip() if payload.sls_project else None
+    sls_logstore = payload.sls_logstore.strip() if payload.sls_logstore else None
+    if has_complete_sls and not any(
+        item["endpoint"] == sls_endpoint and item["project"] == sls_project and item["logstore"] == sls_logstore
+        for item in resources["log_sources"]
+    ):
+        raise HTTPException(status_code=400, detail="Choose a Log Service source returned for this website role and region.")
+    if security_group_id:
+        selected_group = next(
+            (item for item in resources["security_groups"] if item["security_group_id"] == security_group_id),
+            None,
+        )
+        if not selected_group:
+            raise HTTPException(status_code=400, detail="Choose a security group returned for this website role and region.")
+        if not selected_group["dedicated"]:
+            raise HTTPException(
+                status_code=400,
+                detail="Cloud protection requires a security group attached to exactly one website server.",
+            )
+    try:
+        config = database.save_alibaba_autopilot_config(
             site_id,
             {
-                "endpoint": payload.sls_endpoint.strip(),
-                "project": payload.sls_project.strip(),
-                "logstore": payload.sls_logstore.strip(),
-                "role_arn": payload.role_arn.strip(),
-                "encrypted_external_id": encrypted_external_id,
+                "region": region,
+                "security_group_id": security_group_id,
+                "sls_endpoint": sls_endpoint,
+                "sls_project": sls_project,
+                "sls_logstore": sls_logstore,
+                "enforcement_mode": payload.enforcement_mode,
             },
         )
-        alibaba_sls.invalidate_cache(site_id)
-    alibaba_autopilot.invalidate_cache(site_id)
-    if payload.enforcement_mode == "waf_enforced" and waf_instance_id:
-        try:
-            alibaba_autopilot.get_or_create_defense_template(site_id)
-            config = database.get_alibaba_autopilot_config(site_id) or config
-        except Exception as exc:
-            logger.warning("Could not provision SecAi WAF template for site %s during setup: %s", site_id, exc)
+    except database.INTEGRITY_ERRORS as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="That log source or protection group is already assigned to another SecAi website.",
+        ) from exc
     return {
         "config": alibaba_autopilot.public_config(config),
         "status": alibaba_autopilot.site_status(site_id),
@@ -168,9 +179,111 @@ def alibaba_resources(site_id: str, user_email: str = Depends(current_user_email
     return alibaba_autopilot.discover_resources(site_id)
 
 
+@router.post("/{site_id}/alibaba-connection/prepare")
+def prepare_alibaba_connection(
+    site_id: str,
+    request: Request,
+    user_email: str = Depends(current_user_email),
+) -> dict[str, Any]:
+    """Generate the external ID and authorization template for one owned website."""
+    ensure_site_owner(site_id, user_email)
+    protect_judge_configuration(site_id, user_email)
+    enforce_request_rate(request, f"alibaba-prepare:{site_id}", 10, 3600)
+    try:
+        database.prepare_alibaba_connection(site_id)
+        return alibaba_autopilot.site_status(site_id)
+    except (ValueError, alibaba_autopilot.AlibabaAutopilotNotConfigured) as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.post("/{site_id}/alibaba-connection/verify")
+def verify_alibaba_connection(
+    site_id: str,
+    payload: AlibabaConnectionVerifyIn,
+    request: Request,
+    user_email: str = Depends(current_user_email),
+) -> dict[str, Any]:
+    """Verify the customer-approved role before resource discovery is allowed."""
+    ensure_site_owner(site_id, user_email)
+    protect_judge_configuration(site_id, user_email)
+    enforce_request_rate(request, f"alibaba-verify:{site_id}", 20, 3600)
+    saved = database.get_alibaba_autopilot_config(site_id)
+    if not saved:
+        raise HTTPException(status_code=400, detail="Start the Alibaba Cloud connection first.")
+    if (
+        saved.get("connection_status") == "verified"
+        and saved.get("role_arn") != payload.role_arn.strip()
+        and _policy_that_blocks_cloud_changes(site_id)
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="Remove the website's active protection before changing its Alibaba Cloud role.",
+        )
+    try:
+        region = alibaba_coordinates.normalize_region(payload.region)
+        _, role_name = alibaba_credentials.parse_role_arn(payload.role_arn.strip())
+        expected_role_name = alibaba_autopilot.authorization_bundle(saved)["role_name"]
+        if role_name != expected_role_name:
+            raise ValueError("Use the RoleArn output from this website's generated ROS template.")
+        account_id = alibaba_credentials.verify_role(site_id, payload.role_arn.strip(), saved["external_id"])
+    except (
+        ValueError,
+        alibaba_autopilot.AlibabaAutopilotNotConfigured,
+        alibaba_credentials.AlibabaRoleAuthorizationError,
+    ) as exc:
+        message = "SecAi could not verify that role. Check its trust policy, external ID, and permissions."
+        database.mark_alibaba_connection_error(site_id, message)
+        raise HTTPException(status_code=400, detail=message) from exc
+    database.verify_alibaba_connection(site_id, payload.role_arn.strip(), account_id, region)
+    alibaba_credentials.invalidate_assumed_role_cache()
+    return alibaba_autopilot.site_status(site_id)
+
+
+@router.delete("/{site_id}/alibaba-connection")
+def disconnect_alibaba_connection(
+    site_id: str,
+    user_email: str = Depends(current_user_email),
+) -> dict[str, str]:
+    """Disconnect a customer role only when no active provider work depends on it."""
+    ensure_site_owner(site_id, user_email)
+    protect_judge_configuration(site_id, user_email)
+    if _policy_that_blocks_cloud_changes(site_id):
+        raise HTTPException(
+            status_code=409,
+            detail="Remove the website's active protection before disconnecting Alibaba Cloud.",
+        )
+    database.delete_alibaba_connection(site_id)
+    alibaba_credentials.invalidate_assumed_role_cache()
+    return {"status": "disconnected", "site_id": site_id}
+
+
+@router.post("/{site_id}/alibaba-resources/discover")
+def discover_alibaba_resources(
+    site_id: str,
+    payload: AlibabaResourceDiscoveryIn,
+    request: Request,
+    user_email: str = Depends(current_user_email),
+) -> dict[str, Any]:
+    """Discover Alibaba resources for an owned site's requested region."""
+    ensure_site_owner(site_id, user_email)
+    enforce_request_rate(request, f"alibaba-discover:{site_id}", 60, 3600)
+    try:
+        connection = replace(
+            alibaba_autopilot.load_site_connection(site_id),
+            region=alibaba_coordinates.normalize_region(payload.region),
+        )
+        return alibaba_resource_service.discover(connection, connection.region)
+    except (
+        ValueError,
+        alibaba_autopilot.AlibabaAutopilotNotConfigured,
+        alibaba_resource_service.AlibabaResourceDiscoveryError,
+    ) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.get("/{site_id}/autopilot-status")
 def autopilot_status(site_id: str, user_email: str = Depends(current_user_email)) -> dict[str, Any]:
-    """Return whether this site is observe-only or has WAF enforcement active."""
+    """Return whether this site is observe-only or has security group enforcement active."""
     ensure_site_owner(site_id, user_email)
     return alibaba_autopilot.site_status(site_id)
 
@@ -183,57 +296,29 @@ def pull_alibaba_sls_logs(
 ) -> dict[str, Any]:
     """Pull logs from a site's saved Alibaba SLS connection."""
     ensure_site_owner(site_id, user_email)
-    saved = database.get_sls_config(site_id)
-    if not saved:
+    saved = database.get_alibaba_autopilot_config(site_id)
+    if not saved or not all([saved.get("sls_endpoint"), saved.get("sls_project"), saved.get("sls_logstore")]):
         raise HTTPException(status_code=400, detail="Connect Alibaba Cloud logs before checking recent activity.")
-    parsed = alibaba_sls.fetch_events(
+    parsed = alibaba_sls.fetch_saved_site_events(
         site_id,
-        payload.query,
-        payload.minutes,
-        payload.limit,
-        {
-            "endpoint": saved["endpoint"],
-            "project": saved["project"],
-            "logstore": saved["logstore"],
-            "role_arn": saved["role_arn"],
-            "external_id": encryption.decrypt_secret(saved["encrypted_external_id"]),
-        },
+        query=payload.query,
+        minutes=payload.minutes,
+        limit=payload.limit,
     )
-    incidents = []
-    duplicates_skipped = 0
-    events_ingested = 0
-    for event in parsed:
-        stored_event = database.insert_event(event)
-        if stored_event.pop("_deduplicated", False):
-            duplicates_skipped += 1
-            continue
-        events_ingested += 1
-        job = database.create_analysis_job(stored_event["id"], stored_event["site_id"])
-        if get_settings().secai_analysis_mode == "background":
-            analysis.executor.submit(analysis.run_analysis_job, stored_event, job["id"], True)
-        else:
-            incident, _ = analysis.run_analysis_job(stored_event, job["id"])
-            if incident:
-                discord.notify_incident(incident)
-                incidents.append(incident)
+    result = ingest_sls_events(parsed)
     return {
-        "events_seen": len(parsed),
-        "events_ingested": events_ingested,
-        "duplicates_skipped": duplicates_skipped,
-        "incidents_created": len(incidents),
-        "incidents": incidents,
+        **result,
+        "incidents": [],
     }
 
 
-def _public_sls_config(config: dict[str, Any]) -> dict[str, Any]:
-    """Return Alibaba SLS settings safe for the dashboard."""
-    return {
-        "site_id": config["site_id"],
-        "endpoint": config["endpoint"],
-        "project": config["project"],
-        "logstore": config["logstore"],
-        "role_arn": config["role_arn"],
-        "external_id": encryption.mask_secret(encryption.decrypt_secret(config["encrypted_external_id"])),
-        "created_at": config["created_at"],
-        "updated_at": config["updated_at"],
-    }
+def _policy_that_blocks_cloud_changes(site_id: str) -> dict[str, Any] | None:
+    """Return provider work that must stay reachable through the saved cloud coordinates."""
+    return next(
+        (
+            policy
+            for policy in database.list_policies(site_id, limit=200)
+            if policy["status"] in {"pending", "applying", "active", "revoking"}
+        ),
+        None,
+    )

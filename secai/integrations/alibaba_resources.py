@@ -1,0 +1,171 @@
+from __future__ import annotations
+
+import json
+import logging
+from typing import Any
+
+from secai.integrations import alibaba_coordinates, alibaba_credentials
+from secai.integrations.alibaba_autopilot import AlibabaAutopilotConnection
+
+logger = logging.getLogger(__name__)
+
+
+class AlibabaResourceDiscoveryError(RuntimeError):
+    """Raised when SecAi cannot inspect resources through a customer connection."""
+
+
+def discover(connection: AlibabaAutopilotConnection, region: str | None = None) -> dict[str, Any]:
+    """Discover resources using only this website's temporary customer role."""
+    try:
+        region = alibaba_coordinates.normalize_region(region or connection.region)
+    except ValueError as exc:
+        raise AlibabaResourceDiscoveryError(str(exc)) from exc
+    endpoint = alibaba_coordinates.sls_endpoint_for_region(region)
+    warnings: list[str] = []
+    try:
+        log_sources = _discover_log_sources(endpoint, connection)
+    except Exception as exc:
+        logger.warning("Alibaba Log Service discovery failed for %s", region, exc_info=exc)
+        log_sources = []
+        warnings.append("SecAi could not read website activity resources in this region.")
+    try:
+        security_groups = _discover_security_groups(region, connection)
+    except Exception as exc:
+        logger.warning("Alibaba ECS security-group discovery failed for %s", region, exc_info=exc)
+        security_groups = []
+        warnings.append("SecAi could not check whether approved protection is available in this region.")
+    if not log_sources and not security_groups and warnings:
+        raise AlibabaResourceDiscoveryError(
+            "Alibaba Cloud authorized the connection, but no usable resources could be read."
+        )
+    return {
+        "region": region,
+        "sls_endpoint": endpoint,
+        "log_sources": log_sources,
+        "security_groups": security_groups,
+        "warnings": warnings,
+    }
+
+
+def _discover_log_sources(endpoint: str, connection: AlibabaAutopilotConnection) -> list[dict[str, str]]:
+    try:
+        from aliyun.log import LogClient
+    except ModuleNotFoundError as exc:
+        raise AlibabaResourceDiscoveryError("The Alibaba Log Service SDK is not installed.") from exc
+    credential = alibaba_credentials.credential_for_connection(connection)
+    client = LogClient(
+        endpoint,
+        credential.access_key_id,
+        credential.access_key_secret,
+        credential.security_token,
+    )
+    projects = []
+    for offset in range(0, 1000, 100):
+        page = list(client.list_project(offset, 100, "").get_projects())
+        projects.extend(page)
+        if len(page) < 100:
+            break
+    sources: list[dict[str, str]] = []
+    for project in projects:
+        project_name = _field(project, "projectName", "project_name")
+        if not project_name:
+            continue
+        logstores: list[str] = []
+        for offset in range(0, 5000, 500):
+            page = list(client.list_logstore(project_name, None, offset, 500).get_logstores())
+            logstores.extend(str(item) for item in page)
+            if len(page) < 500:
+                break
+        sources.extend(
+            {
+                "endpoint": endpoint,
+                "project": project_name,
+                "logstore": str(logstore),
+                "label": f"{project_name} / {logstore}",
+            }
+            for logstore in logstores
+        )
+    return sorted(sources, key=lambda item: item["label"].lower())
+
+
+def _discover_security_groups(
+    region: str,
+    connection: AlibabaAutopilotConnection,
+    security_group_id: str | None = None,
+) -> list[dict[str, Any]]:
+    try:
+        from alibabacloud_ecs20140526 import models as ecs_models
+        from alibabacloud_ecs20140526.client import Client as EcsClient
+    except ModuleNotFoundError as exc:
+        raise AlibabaResourceDiscoveryError("The Alibaba ECS SDK is not installed.") from exc
+    client = EcsClient(alibaba_credentials.openapi_config(f"ecs.{region}.aliyuncs.com", connection))
+    groups: list[Any] = []
+    next_token: str | None = None
+    for _ in range(20):
+        request_args: dict[str, Any] = {
+            "region_id": region,
+            "max_results": 100,
+            "is_query_ecs_count": True,
+        }
+        if security_group_id:
+            request_args["security_group_ids"] = json.dumps([security_group_id])
+        if next_token:
+            request_args["next_token"] = next_token
+        response = client.describe_security_groups(ecs_models.DescribeSecurityGroupsRequest(**request_args))
+        payload = _as_dict(getattr(response, "body", response))
+        container = payload.get("SecurityGroups") or payload.get("security_groups") or {}
+        page = container.get("SecurityGroup") or container.get("security_group") or []
+        groups.extend(page)
+        next_token = _field(payload, "NextToken", "next_token") or None
+        if not next_token or security_group_id:
+            break
+    discovered = []
+    for group in groups:
+        item = _as_dict(group)
+        if item.get("ServiceManaged") or item.get("service_managed"):
+            continue
+        group_id = _field(item, "SecurityGroupId", "security_group_id")
+        if not group_id:
+            continue
+        name = _field(item, "SecurityGroupName", "security_group_name") or group_id
+        ecs_count = int(item.get("EcsCount") or item.get("ecs_count") or 0)
+        discovered.append(
+            {
+                "security_group_id": group_id,
+                "name": name,
+                "description": _field(item, "Description", "description"),
+                "vpc_id": _field(item, "VpcId", "vpc_id"),
+                "ecs_count": ecs_count,
+                "dedicated": ecs_count == 1,
+            }
+        )
+    return sorted(discovered, key=lambda item: str(item["name"]).lower())
+
+
+def security_group_is_dedicated(connection: AlibabaAutopilotConnection) -> bool:
+    """Re-check that the saved write target still belongs to exactly one ECS instance."""
+    if not connection.security_group_id:
+        return False
+    groups = _discover_security_groups(connection.region, connection, connection.security_group_id)
+    return len(groups) == 1 and groups[0]["security_group_id"] == connection.security_group_id and groups[0]["dedicated"]
+
+
+def _as_dict(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if hasattr(value, "to_map"):
+        mapped = value.to_map()
+        return mapped if isinstance(mapped, dict) else {}
+    return {}
+
+
+def _field(value: Any, *names: str) -> str:
+    item = _as_dict(value)
+    for name in names:
+        candidate = item.get(name)
+        if candidate is not None:
+            return str(candidate)
+        candidate = getattr(value, name, None)
+        if candidate is not None:
+            return str(candidate)
+    return ""

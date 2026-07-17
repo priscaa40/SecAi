@@ -1,0 +1,10 @@
+# Replace STOREFRONT_PUBLIC_IP with the Storefront ECS EIP.
+https://STOREFRONT_PUBLIC_IP {
+	tls {
+		issuer acme {
+			profile shortlived
+		}
+	}
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:9000
+}

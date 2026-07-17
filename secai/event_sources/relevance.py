@@ -2,26 +2,28 @@ from __future__ import annotations
 
 from typing import Any
 
-
 STRONG_ATTACK_SIGNALS = {
     "sql_injection_pattern",
     "path_traversal_pattern",
     "xss_pattern",
     "suspicious_form_payload",
     "rapid_form_submit",
-    "bot_like_behavior",
-    "client_error_spike",
 }
 
-BROWSER_EVENT_TYPES = {
-    "suspicious_form_submit",
-    "rapid_form_submit",
-    "browser_error_spike",
-    "bot_like_behavior",
+BROWSER_ATTACK_SIGNALS = {
+    "sql_injection_pattern",
+    "path_traversal_pattern",
+    "xss_pattern",
 }
+BROWSER_RAPID_SUBMIT_THRESHOLD = 10
 
-BROWSER_SIGNALS = STRONG_ATTACK_SIGNALS | {
-    "bot_like_user_agent",
+SLS_GROUP_MINIMUM_RECORDS = {
+    "authentication": 3,
+    "bot_activity": 5,
+    "client_error": 5,
+    "not_found_scan": 6,
+    "rate_limited": 3,
+    "server_error": 3,
 }
 
 
@@ -31,9 +33,9 @@ def is_event_relevant(event: dict[str, Any]) -> bool:
     if source == "browser":
         return is_browser_event_relevant(event)
     if source == "alibaba_sls":
-        return is_sls_event_relevant(event)
-    if source == "demo":
-        return True
+        if str(event.get("event_type") or "").endswith("_group"):
+            return is_sls_group_relevant(event)
+        return is_sls_candidate_relevant(event)
     return has_strong_attack_signal(event)
 
 
@@ -41,21 +43,35 @@ def is_browser_event_relevant(event: dict[str, Any]) -> bool:
     """Return whether a browser event matches SecAi's suspicious-only contract."""
     signals = set(event.get("signals") or [])
     event_type = event.get("event_type")
-    if event_type not in BROWSER_EVENT_TYPES and not has_strong_attack_signal(event):
-        return False
-    return bool(signals & BROWSER_SIGNALS)
+    if event_type == "suspicious_form_submit":
+        return bool(signals & BROWSER_ATTACK_SIGNALS)
+    if event_type == "rapid_form_submit":
+        count = _integer((event.get("metadata") or {}).get("submit_count_10s"))
+        return "rapid_form_submit" in signals and count is not None and count >= BROWSER_RAPID_SUBMIT_THRESHOLD
+    return False
 
 
-def is_sls_event_relevant(event: dict[str, Any]) -> bool:
-    """Return whether one normalized Alibaba SLS event should enter the agent workflow."""
+def is_sls_candidate_relevant(event: dict[str, Any]) -> bool:
+    """Return whether one SLS record belongs in the bounded grouping stage."""
     if has_strong_attack_signal(event):
         return True
-    status_code = _status_code(event.get("status_code"))
-    if status_code in {401, 403}:
+    status_code = _integer(event.get("status_code"))
+    return status_code is not None and status_code >= 400
+
+
+def is_sls_group_relevant(event: dict[str, Any]) -> bool:
+    """Return whether a grouped SLS pattern is strong enough for Qwen analysis."""
+    if has_strong_attack_signal(event):
         return True
-    if status_code is not None and status_code >= 500:
-        return True
-    return False
+    event_type = str(event.get("event_type") or "")
+    if not (event_type.startswith("sls_") and event_type.endswith("_group")):
+        return False
+    family = event_type.removeprefix("sls_").removesuffix("_group")
+    minimum = SLS_GROUP_MINIMUM_RECORDS.get(family)
+    if minimum is None:
+        return False
+    evidence = (event.get("metadata") or {}).get("evidence") or []
+    return len(evidence) >= minimum
 
 
 def has_strong_attack_signal(event: dict[str, Any]) -> bool:
@@ -63,8 +79,8 @@ def has_strong_attack_signal(event: dict[str, Any]) -> bool:
     return bool(set(event.get("signals") or []) & STRONG_ATTACK_SIGNALS)
 
 
-def _status_code(value: Any) -> int | None:
-    """Coerce a status code into an int when possible."""
+def _integer(value: Any) -> int | None:
+    """Coerce a value into an integer when possible."""
     if value is None:
         return None
     try:

@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: secai_test
+          POSTGRES_USER: secai
+          POSTGRES_PASSWORD: secai_test_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U secai -d secai_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements-dev.lock
+      - run: pip-audit -r requirements.lock
+      - run: pip-audit -r protected_site/requirements.lock
+      - run: ruff check .
+      - run: mypy secai protected_site
+      - run: pytest --cov --cov-report=term-missing
+        env:
+          DATABASE_URL: postgresql://secai:secai_test_password@127.0.0.1:5432/secai_test
+          DASHSCOPE_API_KEY: test-qwen-key
+          DISCORD_BOT_TOKEN: test-discord-bot
+          DISCORD_APPLICATION_ID: "123456789012345678"
+          DISCORD_APPLICATION_PUBLIC_KEY: "1111111111111111111111111111111111111111111111111111111111111111"
+          SECAI_STOREFRONT_SECURITY_GROUP_ID: sg-test123
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm audit --omit=dev
+      - run: npm run check

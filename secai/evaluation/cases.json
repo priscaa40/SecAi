@@ -1,0 +1,58 @@
+[
+  {
+    "name": "sql_injection_form",
+    "source_contract": "browser_snippet",
+    "expected_incident": true,
+    "expected_profile": "sql_injection_attempt",
+    "event": {"source": "browser", "event_type": "suspicious_form_submit", "method": "POST", "path": "/catalog/search", "payload": "1 OR 1=1--", "signals": ["suspicious_form_payload"], "metadata": {"form_key": "POST|same_origin|/catalog/search|named:catalog-search"}}
+  },
+  {
+    "name": "xss_contact_form",
+    "source_contract": "browser_snippet",
+    "expected_incident": true,
+    "expected_profile": "cross_site_scripting_attempt",
+    "event": {"source": "browser", "event_type": "suspicious_form_submit", "method": "POST", "path": "/support/ticket", "payload": "<script>alert(1)</script>", "signals": ["suspicious_form_payload"], "metadata": {"form_key": "POST|same_origin|/support/ticket|named:new-ticket"}}
+  },
+  {
+    "name": "path_traversal_download",
+    "source_contract": "alibaba_sls",
+    "expected_incident": true,
+    "expected_profile": "path_traversal_attempt",
+    "event": {"source": "alibaba_sls", "event_type": "sls_path_traversal_group", "method": "GET", "path": "/documents/export", "query": "file=../../etc/passwd", "status_code": 403, "ip": "8.8.4.4", "metadata": {"evidence": [{"path": "/documents/export", "status_code": 403}]}}
+  },
+  {
+    "name": "authentication_failure_burst",
+    "source_contract": "alibaba_sls",
+    "expected_incident": true,
+    "expected_profile": "suspicious_authentication_failure_burst",
+    "event": {"source": "alibaba_sls", "event_type": "sls_authentication_group", "method": "POST", "path": "/staff/sign-in", "status_code": 401, "ip": "8.8.8.8", "signals": ["auth_failure"], "payload": "5 related failed sign-in records", "metadata": {"evidence": [{"path": "/staff/sign-in", "status_code": 401}, {"path": "/staff/sign-in", "status_code": 401}, {"path": "/staff/sign-in", "status_code": 401}, {"path": "/staff/sign-in", "status_code": 401}, {"path": "/staff/sign-in", "status_code": 401}]}}
+  },
+  {
+    "name": "automated_form_abuse",
+    "source_contract": "browser_snippet",
+    "expected_incident": true,
+    "expected_profile": "automated_form_abuse",
+    "event": {"source": "browser", "event_type": "rapid_form_submit", "method": "POST", "path": "/event-registration", "signals": ["rapid_form_submit"], "metadata": {"form_key": "POST|same_origin|/event-registration|named:registration", "submit_count_10s": 10}}
+  },
+  {
+    "name": "server_error_spike",
+    "source_contract": "alibaba_sls",
+    "expected_incident": true,
+    "expected_profile": "server_error_spike",
+    "event": {"source": "alibaba_sls", "event_type": "sls_server_error_group", "method": "POST", "path": "/billing/charge", "status_code": 500, "ip": "8.8.8.8", "signals": ["server_error"], "payload": "3 related server-error records", "metadata": {"evidence": [{"path": "/billing/charge", "status_code": 500}, {"path": "/billing/charge", "status_code": 500}, {"path": "/billing/charge", "status_code": 500}]}}
+  },
+  {
+    "name": "legitimate_documentation_code_sample",
+    "source_contract": "browser_snippet",
+    "expected_incident": false,
+    "expected_profile": null,
+    "event": {"source": "browser", "event_type": "suspicious_form_submit", "method": "POST", "path": "/documentation/code-examples/edit", "payload": "JavaScript guide example: <script>console.log('hello')</script>", "signals": ["suspicious_form_payload"], "metadata": {"form_id": "code-example-editor", "form_key": "POST|same_origin|/documentation/code-examples/edit|named:code-example-editor"}}
+  },
+  {
+    "name": "ordinary_product_search",
+    "source_contract": "pipeline_filter",
+    "expected_incident": false,
+    "expected_profile": null,
+    "event": {"source": "browser", "event_type": "http_request", "method": "GET", "path": "/knowledge-base", "query": "password reset help", "signals": []}
+  }
+]

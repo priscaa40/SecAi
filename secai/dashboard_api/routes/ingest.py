@@ -2,24 +2,25 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Header
-from fastapi import HTTPException
+from fastapi import APIRouter, Header, HTTPException, Request
 from fastapi.responses import Response
 
 from secai import database
-from secai.settings import get_settings
 from secai.event_sources import browser
 from secai.event_sources import service as ingest_service
 from secai.models import EventIn
-
+from secai.security.client_ip import request_client_ip
+from secai.settings import get_settings
 
 router = APIRouter(tags=["ingest"])
 
 
 @router.post("/api/events")
-def ingest_event(payload: EventIn, x_secai_key: str | None = Header(default=None)) -> dict[str, Any]:
+def ingest_event(request: Request, payload: EventIn, x_secai_key: str | None = Header(default=None)) -> dict[str, Any]:
     """Accept one browser snippet event."""
-    return ingest_service.ingest_event(payload, x_secai_key)
+    if payload.source != "browser":
+        raise HTTPException(status_code=403, detail="The public ingest endpoint accepts browser evidence only.")
+    return ingest_service.ingest_event(payload, x_secai_key, request_client_ip(request))
 
 
 @router.get("/api/integrations/browser.js")

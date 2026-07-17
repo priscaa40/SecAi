@@ -12,6 +12,64 @@ export type Site = {
   created_at?: string;
 };
 
+export type RecommendedAction = {
+  action: "monitor" | "notify_admin" | "block_ip";
+  target?: string;
+  reason?: string;
+  report_sections: {
+    summary: string;
+    what_happened: string;
+    what_is_unknown: string;
+    why_it_matters: string;
+  };
+  owner_recommendation: {
+    incident_title: string;
+    title: string;
+    explanation: string;
+    steps: string[];
+  };
+  protection_status: {
+    state: "approval_required" | "unavailable" | "not_authorized" | "not_proposed";
+    title: string;
+    explanation: string;
+  };
+  requires_approval?: boolean;
+  duration_seconds?: number;
+  evidence_used?: string[];
+  source_event_id?: number;
+  agent_trace?: AgentTraceStep[];
+  [key: string]: unknown;
+};
+
+export type AgentTraceStep = {
+  agent: string;
+  decision: string;
+  summary: string;
+  tools?: string[];
+  security_reference_ids?: string[];
+};
+
+export type IncidentEvidence = {
+  observed_at?: string | null;
+  created_at?: string | null;
+  source?: string | null;
+  ip?: string | null;
+  method?: string | null;
+  path?: string | null;
+  status_code?: number | null;
+  signals?: string[];
+  event_type?: string | null;
+};
+
+export type ProtectionPolicy = {
+  status: "not_required" | "not_started" | "pending" | "applying" | "active" | "revoking" | "revoked" | "expired" | "failed";
+  provider_rule_id?: string | null;
+  error_message?: string | null;
+  expires_at?: string | null;
+  target?: string | null;
+  action?: string | null;
+};
+
 export type Incident = {
   id: number;
   site_id: string;
@@ -22,18 +80,27 @@ export type Incident = {
   affected_route?: string | null;
   confidence: number;
   report: string;
-  recommended_action: Record<string, unknown>;
+  recommended_action: RecommendedAction;
   created_at: string;
   updated_at: string;
+  execution_status: "not_required" | "not_started" | "pending" | "applying" | "active" | "revoking" | "revoked" | "expired" | "failed";
+  active_policy: boolean;
+  evidence?: IncidentEvidence[];
+  policy?: ProtectionPolicy | null;
 };
 
-export type UsageSummary = {
-  calls: number;
-  input_tokens: number;
-  output_tokens: number;
-  total_tokens: number;
-  estimated_cost_usd: number;
-  avg_latency_ms: number;
+export type AnalysisJob = {
+  id: number;
+  site_id: string;
+  status: "queued" | "running" | "failed" | "incident_created" | "no_incident";
+  current_step?: string | null;
+  error?: string | null;
+  incident_id?: number | null;
+  attempt_count: number;
+  created_at: string;
+  updated_at?: string;
+  evidence?: IncidentEvidence[];
+  event?: IncidentEvidence | null;
 };
 
 export type Session = {
@@ -47,51 +114,46 @@ export type AuthResult = {
   user: User;
 };
 
-export type AlibabaSlsConfig = {
-  site_id: string;
-  endpoint: string;
-  project: string;
-  logstore: string;
-  role_arn: string;
-  external_id: string;
-  created_at: string;
-  updated_at: string;
-};
-
 export type AlibabaAutopilotConfig = {
   site_id: string;
-  role_arn: string;
+  role_arn?: string | null;
   external_id: string;
+  account_id?: string | null;
+  connection_status: "pending" | "verified" | "error";
+  connection_error?: string | null;
+  verified_at?: string | null;
   region: string;
-  waf_instance_id?: string | null;
-  waf_domain?: string | null;
+  security_group_id?: string | null;
   sls_endpoint?: string | null;
   sls_project?: string | null;
   sls_logstore?: string | null;
-  enforcement_mode: "observe_only" | "waf_enforced";
+  enforcement_mode: "observe_only" | "security_group";
   created_at: string;
   updated_at: string;
 };
 
-export type AlibabaAutopilotTemplate = {
-  external_id: string;
-  role_name: string;
-  role_arn_hint: string;
-  waf_instance_id: string;
-  sls_endpoint: string;
-  sls_project: string;
-  sls_logstore: string;
+export type AlibabaLogSource = {
+  endpoint: string;
+  project: string;
+  logstore: string;
+  label: string;
+};
+
+export type AlibabaSecurityGroup = {
+  security_group_id: string;
+  name: string;
+  description: string;
+  vpc_id: string;
+  ecs_count: number;
+  dedicated: boolean;
+};
+
+export type AlibabaDiscoveredResources = {
   region: string;
-  console_url: string;
-  quick_create_url: string;
-  template_url: string;
-  console_url_alibabacloud: string;
-  console_url_aliyun: string;
-  principal: string;
-  principal_configured: boolean;
-  trust_policy: Record<string, unknown>;
-  permission_policy: Record<string, unknown>;
-  template: Record<string, unknown>;
+  sls_endpoint: string;
+  log_sources: AlibabaLogSource[];
+  security_groups: AlibabaSecurityGroup[];
+  warnings: string[];
 };
 
 export type RemediationExecution = {
@@ -103,6 +165,7 @@ export type RemediationExecution = {
   action: string;
   target: string;
   status: string;
+  provider_rule_id?: string | null;
   error_message?: string | null;
   created_at: string;
 };
@@ -110,35 +173,52 @@ export type RemediationExecution = {
 export type AutopilotStatus = {
   site_id: string;
   configured: boolean;
+  connection_status: "not_connected" | "pending" | "verified" | "error";
   logs_connected: boolean;
-  waf_connected: boolean;
+  security_group_connected: boolean;
   autopilot_active: boolean;
-  enforcement_mode: "observe_only" | "waf_enforced";
+  enforcement_mode: "observe_only" | "security_group";
   available_actions: string[];
   config: AlibabaAutopilotConfig | null;
+  authorization: AlibabaAuthorization | null;
   last_execution: RemediationExecution | null;
   failed_executions: RemediationExecution[];
+};
+
+export type AlibabaAuthorization = {
+  provider_role_arn: string;
+  external_id: string;
+  role_name: string;
+  trust_policy: Record<string, unknown>;
+  permission_policy: Record<string, unknown>;
+  ros_template: Record<string, unknown>;
 };
 
 export type AlibabaSlsPullResult = {
   events_seen: number;
   events_ingested: number;
+  groups_seen: number;
+  groups_created: number;
+  groups_deduplicated: number;
+  groups_filtered: number;
   duplicates_skipped: number;
   incidents_created: number;
   incidents: Incident[];
-};
-
-export type RemediationPreference = {
-  site_id: string;
-  action: string;
-  requires_approval: boolean;
-  updated_at: string;
+  jobs_queued: number;
 };
 
 export type PublicSetupResult = {
   site: Site;
   session: AuthResult | null;
   channels: string[];
-  messaging_setup: { channel: "discord"; setup_code: string }[];
+  messaging_setup: { channel: "discord"; setup_code: string; invite_url: string; expires_at: string }[];
+  selected_evidence_source: "browser" | "alibaba_autopilot";
   snippet: string;
+};
+
+export type DiscordSetup = {
+  channel: "discord";
+  setup_code: string;
+  invite_url: string;
+  expires_at: string;
 };

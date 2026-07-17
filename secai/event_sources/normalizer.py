@@ -3,13 +3,12 @@ from __future__ import annotations
 import re
 from typing import Any
 
-
 SQLI_PATTERNS = [
     r"(\bor\b|\band\b)\s+['\"]?\d+['\"]?\s*=\s*['\"]?\d+",
     r"union\s+select",
     r"sleep\s*\(",
     r"drop\s+table",
-    r"--",
+    r"(?:['\"]|;)\s*--(?:\s|$)",
 ]
 PATH_TRAVERSAL_PATTERNS = [r"\.\./", r"\.\.\\", r"/etc/passwd", r"boot\.ini"]
 XSS_PATTERNS = [r"<script", r"javascript:", r"onerror\s*=", r"onload\s*="]
@@ -22,7 +21,7 @@ def normalize_event(raw: dict[str, Any]) -> dict[str, Any]:
         "source": raw.get("source", "browser"),
         "event_type": raw.get("event_type", "http_request"),
         "method": _clean_upper(raw.get("method")),
-        "path": raw.get("path") or raw.get("metadata", {}).get("url") or "/",
+        "path": raw.get("path") or "/",
         "query": raw.get("query"),
         "status_code": raw.get("status_code"),
         "ip": raw.get("ip") or raw.get("metadata", {}).get("ip"),
@@ -38,8 +37,7 @@ def normalize_event(raw: dict[str, Any]) -> dict[str, Any]:
 def infer_signals(event: dict[str, Any]) -> list[str]:
     """Infer lightweight evidence hints from event fields."""
     haystack = " ".join(
-        str(value or "")
-        for value in [event.get("path"), event.get("query"), event.get("payload"), event.get("metadata")]
+        str(value or "") for value in [event.get("path"), event.get("query"), event.get("payload")]
     ).lower()
     signals: list[str] = []
     if _matches_any(SQLI_PATTERNS, haystack):

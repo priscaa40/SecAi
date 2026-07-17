@@ -1,0 +1,19 @@
+# Caddy 2.11+ can request a short-lived publicly trusted certificate for a
+# public IP address. Replace CONTROL_PUBLIC_IP with the Control ECS EIP.
+https://CONTROL_PUBLIC_IP {
+	tls {
+		issuer acme {
+			profile shortlived
+		}
+	}
+	encode zstd gzip
+
+	@backend path /api/* /approval/* /health /ready /openapi.json /docs /docs/* /redoc /redoc/*
+	handle @backend {
+		reverse_proxy 127.0.0.1:8000
+	}
+
+	handle {
+		reverse_proxy 127.0.0.1:3000
+	}
+}

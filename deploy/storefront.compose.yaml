@@ -1,0 +1,27 @@
+name: secai-storefront
+
+services:
+  storefront:
+    build:
+      context: ..
+      dockerfile: protected_site/Dockerfile
+    command:
+      - uvicorn
+      - protected_site.app:app
+      - --host
+      - 127.0.0.1
+      - --port
+      - "9000"
+    environment:
+      SECAI_PUBLIC_BASE_URL: ${SECAI_PUBLIC_BASE_URL:?SECAI_PUBLIC_BASE_URL is required}
+      SECAI_SITE_ID: ${SECAI_SITE_ID:?SECAI_SITE_ID is required}
+      SECAI_TRUSTED_PROXY_CIDRS: ${SECAI_TRUSTED_PROXY_CIDRS:-127.0.0.1/32}
+    labels:
+      secai.service: storefront
+    logging:
+      driver: json-file
+      options:
+        max-file: "3"
+        max-size: 10m
+    network_mode: host
+    restart: unless-stopped

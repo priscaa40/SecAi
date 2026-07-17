@@ -1,44 +1,31 @@
 from typing import Any, Literal
-from pydantic import BaseModel, Field
 
+from pydantic import BaseModel, ConfigDict, Field
 
-IngestSource = Literal["browser", "alibaba_sls", "alibaba_waf", "demo"]
+IngestSource = Literal["browser", "alibaba_sls"]
 Severity = Literal["low", "medium", "high", "critical"]
 RemediationAction = Literal[
     "monitor",
     "notify_admin",
     "block_ip",
-    "block_ip_range",
-    "rate_limit_ip",
-    "rate_limit_route",
-    "block_payload_pattern",
-    "virtual_patch",
-    "read_only_route",
-    "challenge_route",
-    "enable_anti_scan",
-    "disable_route",
 ]
-AutopilotEnforcementMode = Literal["observe_only", "waf_enforced"]
+AutopilotEnforcementMode = Literal["observe_only", "security_group"]
 REPORTING_ACTIONS = {"monitor", "notify_admin"}
-WAF_REMEDIATION_ACTIONS = {
+SECURITY_GROUP_REMEDIATION_ACTIONS = {
     "block_ip",
-    "block_ip_range",
-    "rate_limit_ip",
-    "rate_limit_route",
-    "block_payload_pattern",
-    "virtual_patch",
-    "read_only_route",
-    "challenge_route",
-    "enable_anti_scan",
-    "disable_route",
 }
 
 
-class SiteCreate(BaseModel):
+class ApiInput(BaseModel):
+    """Reject unknown request fields instead of silently accepting stale clients."""
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class SiteCreate(ApiInput):
     """Request body for creating a monitored website."""
 
     name: str = Field(min_length=1, max_length=120)
-    owner_email: str | None = None
 
 
 class SiteOut(BaseModel):
@@ -49,14 +36,14 @@ class SiteOut(BaseModel):
     ingest_key: str
 
 
-class AuthSignupIn(BaseModel):
+class AuthSignupIn(ApiInput):
     """Request body for creating a website owner account."""
 
     email: str = Field(min_length=3, max_length=254)
     password: str = Field(min_length=8, max_length=256)
 
 
-class AuthLoginIn(BaseModel):
+class AuthLoginIn(ApiInput):
     """Request body for logging in a website owner."""
 
     email: str = Field(min_length=3, max_length=254)
@@ -70,7 +57,7 @@ class AuthOut(BaseModel):
     user: dict[str, Any]
 
 
-class PublicSetupIn(BaseModel):
+class PublicSetupIn(ApiInput):
     """Public setup request for creating a protected website."""
 
     website_name: str = Field(min_length=1, max_length=120)
@@ -78,48 +65,48 @@ class PublicSetupIn(BaseModel):
     report_channels: list[Literal["dashboard", "discord"]] = Field(min_length=1)
     dashboard_email: str | None = Field(default=None, max_length=254)
     dashboard_password: str | None = Field(default=None, max_length=256)
-    sls_endpoint: str | None = Field(default=None, max_length=300)
-    sls_project: str | None = Field(default=None, max_length=160)
-    sls_logstore: str | None = Field(default=None, max_length=160)
-    sls_role_arn: str | None = Field(default=None, max_length=400)
-    sls_external_id: str | None = Field(default=None, max_length=160)
-    alibaba_region: str | None = Field(default=None, max_length=80)
-    waf_instance_id: str | None = Field(default=None, max_length=180)
-    waf_domain: str | None = Field(default=None, max_length=255)
-    automatic_actions: list[RemediationAction] = Field(default_factory=list)
 
 
-class EventIn(BaseModel):
-    """Incoming security event sent by the browser snippet, Alibaba SLS, or demo."""
+class EventIn(ApiInput):
+    """Normalized security event accepted by an evidence-source boundary."""
 
-    site_id: str
+    site_id: str = Field(min_length=1, max_length=160)
     source: IngestSource = "browser"
-    event_type: str = "http_request"
-    method: str | None = None
-    path: str | None = None
-    query: str | None = None
+    event_type: str = Field(default="http_request", min_length=1, max_length=120)
+    method: str | None = Field(default=None, max_length=16)
+    path: str | None = Field(default=None, max_length=2000)
+    query: str | None = Field(default=None, max_length=4000)
     status_code: int | None = None
-    ip: str | None = None
-    user_agent: str | None = None
-    payload: str | None = None
-    signals: list[str] = Field(default_factory=list)
+    ip: str | None = Field(default=None, max_length=80)
+    user_agent: str | None = Field(default=None, max_length=1000)
+    payload: str | None = Field(default=None, max_length=4000)
+    signals: list[str] = Field(default_factory=list, max_length=30)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
-class EventOut(EventIn):
-    """Stored event response with database ID and timestamp."""
+class IncidentEvidenceOut(BaseModel):
+    """Concrete evidence fields rendered in an incident report."""
 
-    id: int
-    created_at: str
+    observed_at: str | None = None
+    source: str | None = None
+    ip: str | None = None
+    method: str | None = None
+    path: str | None = None
+    status_code: int | None = None
+    signals: list[str] = Field(default_factory=list)
+    event_type: str | None = None
 
 
-class RemediationProposal(BaseModel):
-    """Simple public shape for a proposed remediation action."""
+class ProtectionPolicyOut(BaseModel):
+    """Execution state for an owner-approved protective action."""
 
-    action: RemediationAction
-    target: str
-    reason: str
-    requires_approval: bool = True
+    status: str
+    provider: str | None = None
+    provider_rule_id: str | None = None
+    error_message: str | None = None
+    expires_at: str | None = None
+    target: str | None = None
+    action: str | None = None
 
 
 class IncidentOut(BaseModel):
@@ -137,59 +124,45 @@ class IncidentOut(BaseModel):
     recommended_action: dict[str, Any]
     created_at: str
     updated_at: str
+    execution_status: str = "not_required"
+    active_policy: bool = False
+    evidence: list[IncidentEvidenceOut] = Field(default_factory=list)
+    policy: ProtectionPolicyOut | None = None
 
 
-class ApprovalIn(BaseModel):
+class ApprovalIn(ApiInput):
     """Request body for approving or rejecting remediation."""
 
-    approved_by: str = "demo-user"
-    note: str | None = None
+    note: str | None = Field(default=None, max_length=1000)
 
 
-class SlsPullIn(BaseModel):
-    """Request body for pulling logs from Alibaba Simple Log Service."""
-
-    site_id: str
-    ingest_key: str
-    query: str = "*"
-    minutes: int = Field(default=15, ge=1, le=1440)
-    limit: int = Field(default=100, ge=1, le=1000)
-
-
-class AlibabaSlsConfigIn(BaseModel):
-    """Request body for saving Alibaba Simple Log Service settings for a site."""
-
-    endpoint: str = Field(min_length=3, max_length=300)
-    project: str = Field(min_length=1, max_length=160)
-    logstore: str = Field(min_length=1, max_length=160)
-    role_arn: str = Field(min_length=1, max_length=400)
-    external_id: str = Field(min_length=1, max_length=160)
-
-
-class AlibabaAutopilotConfigIn(BaseModel):
+class AlibabaAutopilotConfigIn(ApiInput):
     """Request body for no-code Alibaba Cloud Autopilot setup."""
 
-    role_arn: str = Field(min_length=1, max_length=400)
-    external_id: str | None = Field(default=None, max_length=160)
     region: str = Field(default="ap-southeast-1", min_length=1, max_length=80)
     enforcement_mode: AutopilotEnforcementMode = "observe_only"
-    waf_instance_id: str | None = Field(default=None, max_length=180)
-    waf_domain: str | None = Field(default=None, max_length=255)
+    security_group_id: str | None = Field(default=None, max_length=180)
     sls_endpoint: str | None = Field(default=None, max_length=300)
     sls_project: str | None = Field(default=None, max_length=160)
     sls_logstore: str | None = Field(default=None, max_length=160)
 
 
-class AlibabaSlsPullIn(BaseModel):
+class AlibabaConnectionVerifyIn(ApiInput):
+    """Customer RAM role to verify for one website connection."""
+
+    role_arn: str = Field(min_length=20, max_length=300)
+    region: str = Field(default="ap-southeast-1", min_length=1, max_length=80)
+
+
+class AlibabaResourceDiscoveryIn(ApiInput):
+    """Region to inspect through a website's verified customer RAM role."""
+
+    region: str = Field(default="ap-southeast-1", min_length=1, max_length=80)
+
+
+class AlibabaSlsPullIn(ApiInput):
     """Request body for pulling logs from a saved Alibaba SLS connection."""
 
     query: str = 'status >= 400 or " OR " or "union select" or "../" or "<script" or "javascript:"'
     minutes: int = Field(default=15, ge=1, le=1440)
     limit: int = Field(default=100, ge=1, le=1000)
-
-
-class RemediationPreferenceIn(BaseModel):
-    """Request body for choosing whether an action can run automatically."""
-
-    action: RemediationAction
-    requires_approval: bool = True

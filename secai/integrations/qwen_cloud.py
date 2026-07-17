@@ -3,8 +3,9 @@ from __future__ import annotations
 from functools import lru_cache
 
 from langchain_openai import ChatOpenAI
+from pydantic import SecretStr
 
-from secai.settings import get_settings, qwen_model_for_agent, resolved_qwen_base_url
+from secai.settings import get_settings, qwen_model_for_agent
 
 
 class QwenClient:
@@ -26,10 +27,11 @@ class QwenClient:
 def get_chat_model(agent_name: str = "default") -> ChatOpenAI:
     """Create the LangChain chat model configured for Qwen."""
     settings = QwenClient().settings
+    assert settings.dashscope_api_key is not None
     return ChatOpenAI(
         model=qwen_model_for_agent(agent_name, settings),
-        api_key=settings.dashscope_api_key,
-        base_url=resolved_qwen_base_url(settings),
+        api_key=SecretStr(settings.dashscope_api_key),
+        base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
         temperature=0.2,
         max_completion_tokens=settings.qwen_max_output_tokens,
         timeout=settings.qwen_timeout_seconds,

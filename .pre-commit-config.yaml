@@ -1,0 +1,19 @@
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.12.3
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+      - id: ruff-format
+  - repo: local
+    hooks:
+      - id: backend-tests
+        name: backend tests
+        entry: .venv/bin/pytest -q
+        language: system
+        pass_filenames: false
+      - id: frontend-checks
+        name: frontend checks
+        entry: npm --prefix frontend run check
+        language: system
+        pass_filenames: false
