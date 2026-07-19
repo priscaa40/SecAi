@@ -162,7 +162,7 @@ export function AlibabaAutopilotSetup({
   }
 
   function disconnect() {
-    if (!window.confirm("Disconnect Alibaba Cloud from this website? Browser monitoring will keep working.")) return;
+    if (!window.confirm("Disconnect Alibaba Cloud from this website? SecAi will stop receiving trusted server activity until you reconnect it.")) return;
     void runOperation("disconnecting", async (siteId) => {
       const next = await disconnectAlibabaConnection(session, siteId);
       onStatus(next);

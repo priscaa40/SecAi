@@ -5,6 +5,7 @@ import {
   login,
   logout,
   me,
+  pullAlibabaSlsLogs,
   signup,
 } from "./api";
 import "./App.css";
@@ -101,6 +102,28 @@ function App() {
     navigate("home");
   }
 
+  async function handleDashboardRefresh() {
+    if (!session) return;
+    const site = workspace.selectedSite;
+    if (site?.evidence_source !== "alibaba_autopilot" || !workspace.autopilotStatus?.logs_connected) {
+      await workspace.loadWorkspace(session, site?.site_id);
+      return;
+    }
+    workspace.setBusy(true);
+    workspace.setStatus("Checking Alibaba Cloud for recent activity…");
+    try {
+      const result = await pullAlibabaSlsLogs(session, site.site_id, "*", 15, 100);
+      await workspace.loadWorkspace(session, site.site_id);
+      workspace.setStatus(result.jobs_queued > 0
+        ? `SecAi found suspicious activity and started ${result.jobs_queued} ${result.jobs_queued === 1 ? "investigation" : "investigations"}.`
+        : `Checked ${result.events_seen} recent Alibaba Cloud ${result.events_seen === 1 ? "record" : "records"}. No new investigation was needed.`);
+    } catch (error) {
+      workspace.setStatus(error instanceof Error ? error.message : "SecAi could not check recent Alibaba Cloud activity.");
+    } finally {
+      workspace.setBusy(false);
+    }
+  }
+
   async function loadSessionWorkspace(activeSession: Session) {
     if (!requestedIncidentId) {
       await workspace.loadWorkspace(activeSession);
@@ -140,7 +163,7 @@ function App() {
         status={workspace.status}
         busy={workspace.busy}
         onLogout={handleLogout}
-        onRefresh={() => workspace.loadWorkspace()}
+        onRefresh={handleDashboardRefresh}
         onSiteName={workspace.setSiteName}
         onSiteEvidenceSource={workspace.setSiteEvidenceSource}
         onCreateSite={workspace.handleCreateSite}

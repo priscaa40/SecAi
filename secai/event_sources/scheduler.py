@@ -32,6 +32,7 @@ def start_sls_polling() -> None:
     _stop_event.clear()
     _worker = threading.Thread(target=_poll_loop, name="secai-sls-poller", daemon=True)
     _worker.start()
+    logger.info("Alibaba SLS polling started with a %s-second interval", max(30, settings.secai_sls_poll_interval_seconds))
 
 
 def stop_sls_polling() -> bool:
@@ -82,6 +83,15 @@ def poll_once() -> dict[str, Any]:
             summary["errors"].append({"site_id": site_id, "error": str(exc)})
             continue
         result = ingest_sls_events(events)
+        logger.info(
+            "Scheduled Alibaba SLS poll completed for site %s: events=%s groups=%s queued=%s filtered=%s duplicates=%s",
+            site_id,
+            result["events_seen"],
+            result["groups_seen"],
+            result["jobs_queued"],
+            result["groups_filtered"],
+            result["duplicates_skipped"],
+        )
         summary["events_seen"] += result["events_seen"]
         summary["groups_seen"] += result["groups_seen"]
         summary["groups_created"] += result["groups_created"]

@@ -92,7 +92,7 @@ export function Dashboard({
       <main className="dashboard-main">
         <header className="dashboard-header">
           <div><p className="eyebrow">{viewCopy[activeView].eyebrow}</p><h1>{viewCopy[activeView].title}</h1><p>{viewCopy[activeView].description}</p></div>
-          <button type="button" className="secondary-button refresh-button" onClick={onRefresh} disabled={busy}><RefreshCw size={16} className={busy ? "spin" : ""} /> {busy ? "Checking…" : "Check for updates"}</button>
+          <button type="button" className="secondary-button refresh-button" onClick={onRefresh} disabled={busy}><RefreshCw size={16} className={busy ? "spin" : ""} /> {busy ? "Checking…" : "Check recent activity"}</button>
         </header>
         {status !== "Your reports are up to date." && !busy ? <div className="workspace-message" role="status" aria-live="polite">{status}</div> : null}
 
@@ -109,7 +109,7 @@ export function Dashboard({
 
         {activeView === "protection" ? (
           <section className="protection-page">
-            <SetupChoices session={session} site={selectedSite} busy={busy} />
+            <SetupChoices session={session} site={selectedSite} autopilotStatus={autopilotStatus} busy={busy} onAutopilotStatus={onAutopilotStatus} onSlsPulled={onSlsPulled} />
           </section>
         ) : null}
       </main>
@@ -138,7 +138,7 @@ function OverviewPage({ session, site, incidents, analysisJobs, autopilotStatus,
 }) {
   const cloudConnected = Boolean(autopilotStatus?.logs_connected);
   const usesAlibaba = site?.evidence_source === "alibaba_autopilot";
-  const openConnection = usesAlibaba
+  const openConnection = usesAlibaba && !cloudConnected
     ? () => document.getElementById("alibaba-connection")?.scrollIntoView({ behavior: "smooth", block: "start" })
     : onOpenProtection;
   const attention = incidents.filter((incident) => incident.status === "needs_review");
@@ -167,13 +167,7 @@ function OverviewPage({ session, site, incidents, analysisJobs, autopilotStatus,
         <button type="button" className={hasActivity ? "" : "secondary-button"} onClick={hasActivity ? onOpenIncidents : openConnection}>{hasActivity ? "View activity" : usesAlibaba && !cloudConnected ? "Finish Alibaba setup" : "Check connections"}<ArrowRight size={16} /></button>
       </section>
 
-      {usesAlibaba ? (
-        <section id="alibaba-connection" className="panel-section overview-connection-panel">
-          <div className="section-header"><div className="section-title"><ShieldCheck size={20} /><div><p className="eyebrow">Evidence source</p><h2>Alibaba Cloud connection</h2></div></div></div>
-          <p>Connect this website&apos;s Alibaba Cloud activity so SecAi can investigate trusted server evidence. Completed connection details stay read-only until you choose Edit.</p>
-          {autopilotStatus ? <AlibabaAutopilotSetup session={session} site={site} status={autopilotStatus} busy={busy} onStatus={onAutopilotStatus} onLogsPulled={onSlsPulled} /> : <p className="helper-text">Loading Alibaba Cloud connection…</p>}
-        </section>
-      ) : null}
+      {usesAlibaba && !cloudConnected ? <AlibabaConnectionPanel id="alibaba-connection" session={session} site={site} status={autopilotStatus} busy={busy} onStatus={onAutopilotStatus} onLogsPulled={onSlsPulled} /> : null}
 
       <section className="overview-facts">
         <span><strong>{attention.length}</strong><small>Waiting for you</small></span>
@@ -186,20 +180,36 @@ function OverviewPage({ session, site, incidents, analysisJobs, autopilotStatus,
           <div className="card-header"><div><h2>Recent reports</h2></div><button type="button" className="link-button" onClick={onOpenIncidents}>View all <ArrowRight size={15} /></button></div>
           {incidents.length ? <div className="recent-list">{incidents.slice(0, 5).map((incident) => <button type="button" key={incident.id} onClick={() => onOpenIncident(incident.id)}><span className={`risk-dot risk-${incident.severity}`} /><span><strong>{incident.title}</strong><small>{incident.status === "needs_review" ? "Decision required" : incident.status === "reported" ? "Report ready" : "Decision recorded"}</small></span><span className={`risk-label risk-text-${incident.severity}`}>{incident.severity}</span><ArrowRight size={16} /></button>)}</div> : <div className="empty-state compact-empty"><h3>No reports yet</h3><p>SecAi has not found anything that needs a report.</p></div>}
         </section>
-
-        <section className="overview-section connection-summary">
-          <h2>Monitoring method</h2>
-          <strong>{usesAlibaba ? "Alibaba Cloud activity" : "Website monitoring script"}</strong>
-          <p>{usesAlibaba ? (cloudConnected ? "SecAi can investigate trusted website activity and carry out a temporary protective change after you approve it." : "Finish connecting Alibaba Cloud above before SecAi can investigate trusted website activity.") : "The script works on any website and reports suspicious browser activity. It cannot see requests that bypass the browser, so attackers can avoid it."}</p>
-          <button type="button" className="secondary-button" onClick={openConnection}>{usesAlibaba ? (cloudConnected ? "View connection" : "Finish setup") : "Manage connections"}<ArrowRight size={15} /></button>
-        </section>
       </div>
     </div>
   );
 }
 
-function SetupChoices({ session, site, busy }: {
-  session: Session; site: Site | null; busy: boolean;
+function AlibabaConnectionPanel({ id, session, site, status, busy, onStatus, onLogsPulled }: {
+  id?: string;
+  session: Session;
+  site: Site | null;
+  status: AutopilotStatus | null;
+  busy: boolean;
+  onStatus: (status: AutopilotStatus | null) => void;
+  onLogsPulled: () => void;
+}) {
+  return (
+    <section id={id} className="panel-section overview-connection-panel">
+      <div className="section-header"><div className="section-title"><ShieldCheck size={20} /><div><p className="eyebrow">Evidence source</p><h2>Alibaba Cloud connection</h2></div></div></div>
+      <p>Connect this website&apos;s Alibaba Cloud activity so SecAi can investigate trusted server evidence. Completed connection details stay read-only until you choose Edit.</p>
+      {status ? <AlibabaAutopilotSetup session={session} site={site} status={status} busy={busy} onStatus={onStatus} onLogsPulled={onLogsPulled} /> : <p className="helper-text">Loading Alibaba Cloud connection…</p>}
+    </section>
+  );
+}
+
+function SetupChoices({ session, site, autopilotStatus, busy, onAutopilotStatus, onSlsPulled }: {
+  session: Session;
+  site: Site | null;
+  autopilotStatus: AutopilotStatus | null;
+  busy: boolean;
+  onAutopilotStatus: (status: AutopilotStatus | null) => void;
+  onSlsPulled: () => void;
 }) {
   const snippet = site ? `<script src="${session.apiBase}/api/integrations/browser.js?site_id=${site.site_id}"></script>` : "";
   const [copied, setCopied] = useState(false);
@@ -227,10 +237,15 @@ function SetupChoices({ session, site, busy }: {
     }
   }
 
+  const usesAlibaba = site?.evidence_source === "alibaba_autopilot";
+  const alibabaConnected = Boolean(usesAlibaba && autopilotStatus?.logs_connected);
+
   return (
-    <section className="panel-section connection-panel">
+    <div className="connection-page-stack">
+      {alibabaConnected ? <AlibabaConnectionPanel session={session} site={site} status={autopilotStatus} busy={busy} onStatus={onAutopilotStatus} onLogsPulled={onSlsPulled} /> : null}
+      <section className="panel-section connection-panel">
       <div className="section-header"><div className="section-title"><Wifi size={20} /><div><p className="eyebrow">Optional connections</p><h2>{site?.evidence_source === "browser" ? "Browser monitoring and report delivery" : "Report delivery"}</h2></div></div></div>
-      <p>{site?.evidence_source === "browser" ? "Install the selected browser monitoring script and optionally connect Discord delivery." : "Alibaba Cloud setup lives on Overview. Use this page for optional Discord delivery."}</p>
+      <p>{site?.evidence_source === "browser" ? "Install the selected browser monitoring script and optionally connect Discord delivery." : alibabaConnected ? "Manage Alibaba Cloud above and optionally connect Discord delivery." : "Finish Alibaba Cloud setup on Overview. You can still prepare optional Discord delivery here."}</p>
       {site?.evidence_source === "browser" ? (
         <>
           <div className="cloud-divider"><Globe2 size={19} /><span><strong>Add a monitoring script</strong><small>Works with any website</small></span></div>
@@ -255,6 +270,7 @@ function SetupChoices({ session, site, busy }: {
         </div>
       ) : null}
       {discordMessage ? <p className="status-line danger-text" role="status">{discordMessage}</p> : null}
-    </section>
+      </section>
+    </div>
   );
 }

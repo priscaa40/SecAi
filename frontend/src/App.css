@@ -870,7 +870,8 @@ details > summary::-webkit-details-marker {
 
 /* Protection */
 
-.protection-page { display: grid; gap: 18px; }
+.protection-page,
+.connection-page-stack { display: grid; gap: 18px; }
 .panel-section { padding: 23px; }
 .install-details summary { padding: 12px 13px; display: flex; align-items: center; gap: 7px; color: var(--teal-dark); font-size: 0.78rem; font-weight: 700; }
 
