@@ -64,7 +64,8 @@ def run_qwen_evaluation(cases: list[dict[str, Any]]) -> dict[str, Any]:
     database.init_db()
     predictions = []
     for case in cases:
-        site = database.create_site(f"Evaluation: {case['name']}")
+        evidence_source = "alibaba_autopilot" if case["source_contract"] == "alibaba_sls" else "browser"
+        site = database.create_site(f"Evaluation: {case['name']}", None, evidence_source)
         event = sanitize_event(normalize_event({**case["event"], "site_id": site["site_id"]}))
         if not is_event_relevant(event):
             predictions.append(

@@ -15,16 +15,23 @@ def _session_expires_at() -> str:
     return (datetime.now(UTC) + timedelta(hours=ttl_hours)).isoformat()
 
 
-def create_site(name: str, owner_email: str | None = None) -> dict[str, Any]:
+def create_site(name: str, owner_email: str | None, evidence_source: str) -> dict[str, Any]:
     """Create a monitored site and generate its ingest key."""
     site_id = f"site_{secrets.token_hex(6)}"
     ingest_key = f"sk_{secrets.token_urlsafe(24)}"
     with connect() as conn:
         conn.execute(
-            "insert into sites (site_id, name, owner_email, ingest_key, created_at) values (?, ?, ?, ?, ?)",
-            (site_id, name, owner_email, ingest_key, utc_now()),
+            "insert into sites (site_id, name, owner_email, ingest_key, evidence_source, created_at) "
+            "values (?, ?, ?, ?, ?, ?)",
+            (site_id, name, owner_email, ingest_key, evidence_source, utc_now()),
         )
-    return {"site_id": site_id, "name": name, "owner_email": owner_email, "ingest_key": ingest_key}
+    return {
+        "site_id": site_id,
+        "name": name,
+        "owner_email": owner_email,
+        "ingest_key": ingest_key,
+        "evidence_source": evidence_source,
+    }
 
 
 def create_user(email: str, password_hash: str) -> dict[str, Any]:
@@ -118,7 +125,7 @@ def delete_site(site_id: str) -> None:
 def public_site_script_config(site_id: str) -> dict[str, Any] | None:
     """Return only the site fields needed to render the browser snippet."""
     site = get_site(site_id)
-    if not site:
+    if not site or site["evidence_source"] != "browser":
         return None
     return {"site_id": site["site_id"], "ingest_key": site["ingest_key"]}
 
@@ -157,12 +164,16 @@ def ensure_judge_site(owner_email: str) -> dict[str, Any]:
     with connect() as conn:
         row = conn.execute("select * from sites where site_id = ?", ("judge-site",)).fetchone()
         if row:
-            conn.execute("update sites set owner_email = ? where site_id = ?", (owner_email, "judge-site"))
-            return {**dict(row), "owner_email": owner_email}
+            conn.execute(
+                "update sites set owner_email = ?, evidence_source = ? where site_id = ?",
+                (owner_email, "alibaba_autopilot", "judge-site"),
+            )
+            return {**dict(row), "owner_email": owner_email, "evidence_source": "alibaba_autopilot"}
         ingest_key = secrets.token_urlsafe(32)
         conn.execute(
-            "insert into sites (site_id, name, owner_email, ingest_key, created_at) values (?, ?, ?, ?, ?)",
-            ("judge-site", "Northstar Goods", owner_email, ingest_key, utc_now()),
+            "insert into sites (site_id, name, owner_email, ingest_key, evidence_source, created_at) "
+            "values (?, ?, ?, ?, ?, ?)",
+            ("judge-site", "Northstar Goods", owner_email, ingest_key, "alibaba_autopilot", utc_now()),
         )
     site = get_site("judge-site")
     if not site:

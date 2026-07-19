@@ -3,6 +3,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 IngestSource = Literal["browser", "alibaba_sls"]
+EvidenceSource = Literal["browser", "alibaba_autopilot"]
 Severity = Literal["low", "medium", "high", "critical"]
 RemediationAction = Literal[
     "monitor",
@@ -26,6 +27,7 @@ class SiteCreate(ApiInput):
     """Request body for creating a monitored website."""
 
     name: str = Field(min_length=1, max_length=120)
+    evidence_source: EvidenceSource
 
 
 class SiteOut(BaseModel):
@@ -34,6 +36,7 @@ class SiteOut(BaseModel):
     site_id: str
     name: str
     ingest_key: str
+    evidence_source: EvidenceSource
 
 
 class AuthSignupIn(ApiInput):
@@ -61,7 +64,7 @@ class PublicSetupIn(ApiInput):
     """Public setup request for creating a protected website."""
 
     website_name: str = Field(min_length=1, max_length=120)
-    watch_method: Literal["browser", "alibaba_autopilot"] = "browser"
+    watch_method: EvidenceSource
     report_channels: list[Literal["dashboard", "discord"]] = Field(min_length=1)
     dashboard_email: str | None = Field(default=None, max_length=254)
     dashboard_password: str | None = Field(default=None, max_length=256)

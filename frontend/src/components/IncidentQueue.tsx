@@ -40,9 +40,9 @@ export function IncidentQueue({
   }, [filter, incidents]);
 
   return (
-    <section className="queue-pane" aria-label="Security activity">
+    <aside className="queue-pane" aria-label="Security reports">
       <div className="queue-header">
-        <div><p className="eyebrow">Activity</p><h2>Security reports</h2></div>
+        <div><p className="eyebrow">Activity</p><h2>Reports</h2></div>
         <span className="counter">{incidents.length}</span>
       </div>
       {visibleJobs.length ? (
@@ -89,6 +89,6 @@ export function IncidentQueue({
           </button>
         ))}
       </div>
-    </section>
+    </aside>
   );
 }

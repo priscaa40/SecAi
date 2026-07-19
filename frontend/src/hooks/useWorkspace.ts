@@ -15,6 +15,7 @@ import {
 import type { AnalysisJob, AutopilotStatus, Incident, Session, Site } from "../types";
 
 export const WORKSPACE_READY = "Your reports are up to date.";
+const DASHBOARD_POLL_INTERVAL_MS = 30_000;
 
 export function useWorkspace(session: Session | null) {
   const [sites, setSites] = useState<Site[]>([]);
@@ -23,6 +24,7 @@ export function useWorkspace(session: Session | null) {
   const [selectedIncidentId, setSelectedIncidentId] = useState<number | null>(null);
   const [selectedSiteId, setSelectedSiteId] = useState("");
   const [siteName, setSiteName] = useState("");
+  const [siteEvidenceSource, setSiteEvidenceSource] = useState<Site["evidence_source"]>("browser");
   const [autopilotStatus, setAutopilotStatus] = useState<AutopilotStatus | null>(null);
   const [status, setStatus] = useState(WORKSPACE_READY);
   const [busy, setBusy] = useState(false);
@@ -68,7 +70,8 @@ export function useWorkspace(session: Session | null) {
   useEffect(() => {
     if (!session || !selectedSiteId) return undefined;
     let current = true;
-    const timer = window.setInterval(() => {
+    const refreshActivity = () => {
+      if (document.visibilityState !== "visible") return;
       void Promise.all([listIncidents(session, selectedSiteId), listAnalysisJobs(session, selectedSiteId)])
         .then(([incidentResult, jobResult]) => {
           if (!current) return;
@@ -80,10 +83,16 @@ export function useWorkspace(session: Session | null) {
             || null);
         })
         .catch(() => undefined);
-    }, 10000);
+    };
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") refreshActivity();
+    };
+    const timer = window.setInterval(refreshActivity, DASHBOARD_POLL_INTERVAL_MS);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
     return () => {
       current = false;
       window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
   }, [session, selectedSiteId]);
 
@@ -129,21 +138,25 @@ export function useWorkspace(session: Session | null) {
     setSelectedIncidentId(null);
     setAutopilotStatus(null);
     setSiteName("");
+    setSiteEvidenceSource("browser");
     setStatus(WORKSPACE_READY);
     setBusy(false);
   }
 
   async function handleCreateSite(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!session || !siteName.trim()) return;
+    if (!session || !siteName.trim()) return false;
     setBusy(true);
     try {
-      const site = await createSite(session, siteName.trim());
+      const site = await createSite(session, siteName.trim(), siteEvidenceSource);
       setSiteName("");
+      setSiteEvidenceSource("browser");
       setSelectedSiteId(site.site_id);
       await loadWorkspace(session, site.site_id);
+      return true;
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "We could not add this website.");
+      return false;
     } finally {
       setBusy(false);
     }
@@ -223,10 +236,12 @@ export function useWorkspace(session: Session | null) {
     selectedSiteId,
     selectedIncident,
     siteName,
+    siteEvidenceSource,
     autopilotStatus,
     status,
     busy,
     setSiteName,
+    setSiteEvidenceSource,
     setAutopilotStatus,
     setSelectedIncidentId,
     setStatus,

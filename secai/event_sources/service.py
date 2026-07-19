@@ -21,6 +21,9 @@ def ingest_event(payload: EventIn, ingest_key: str | None, request_ip: str = "un
     """Verify, store, and analyze one incoming event."""
     if not database.verify_ingest_key(payload.site_id, ingest_key):
         raise HTTPException(status_code=401, detail="Invalid site_id or ingest key")
+    site = database.get_site(payload.site_id)
+    if not site or site["evidence_source"] != "browser":
+        raise HTTPException(status_code=403, detail="Browser evidence is not enabled for this website.")
     enforce_event_limits(payload)
     enforce_rate_limit(payload.site_id, request_ip)
 

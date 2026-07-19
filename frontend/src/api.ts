@@ -149,13 +149,13 @@ export function listSites(session: Session) {
   return apiRequest<{ sites: Site[] }>(session.apiBase, "/api/sites", {}, session.token);
 }
 
-export function createSite(session: Session, name: string) {
+export function createSite(session: Session, name: string, evidenceSource: Site["evidence_source"]) {
   return apiRequest<Site>(
     session.apiBase,
     "/api/sites",
     {
       method: "POST",
-      body: { name },
+      body: { name, evidence_source: evidenceSource },
     },
     session.token,
   );
@@ -261,7 +261,7 @@ export function verifyAlibabaConnection(session: Session, siteId: string, roleAr
 }
 
 export function disconnectAlibabaConnection(session: Session, siteId: string) {
-  return apiRequest<{ status: string; site_id: string }>(
+  return apiRequest<AutopilotStatus>(
     session.apiBase,
     `/api/sites/${encodeURIComponent(siteId)}/alibaba-connection`,
     { method: "DELETE" },

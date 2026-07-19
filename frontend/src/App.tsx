@@ -135,12 +135,14 @@ function App() {
         selectedSiteId={workspace.selectedSiteId}
         selectedIncident={workspace.selectedIncident}
         siteName={workspace.siteName}
+        siteEvidenceSource={workspace.siteEvidenceSource}
         autopilotStatus={workspace.autopilotStatus}
         status={workspace.status}
         busy={workspace.busy}
         onLogout={handleLogout}
         onRefresh={() => workspace.loadWorkspace()}
         onSiteName={workspace.setSiteName}
+        onSiteEvidenceSource={workspace.setSiteEvidenceSource}
         onCreateSite={workspace.handleCreateSite}
         onSelectSite={workspace.handleSiteChange}
         onAutopilotStatus={workspace.setAutopilotStatus}

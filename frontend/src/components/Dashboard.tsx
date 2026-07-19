@@ -2,7 +2,6 @@ import {
   ArrowRight,
   BellRing,
   Clipboard,
-  CloudCog,
   Globe2,
   Home,
   LogOut,
@@ -11,8 +10,9 @@ import {
   RefreshCw,
   ShieldCheck,
   Wifi,
+  X,
 } from "lucide-react";
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useEffect, useState } from "react";
 
 import { createDiscordSetup } from "../api";
 import type { AnalysisJob, AutopilotStatus, DiscordSetup, Incident, Session, Site } from "../types";
@@ -23,13 +23,14 @@ import { Brand } from "./PublicPages";
 type DashboardView = "overview" | "incidents" | "protection";
 
 export function Dashboard({
-  session, sites, incidents, analysisJobs, selectedSite, selectedSiteId, selectedIncident, siteName, autopilotStatus, status, busy,
-  onLogout, onRefresh, onSiteName, onCreateSite, onSelectSite, onAutopilotStatus, onSlsPulled, onSelectIncident, onDecision, onProtection, onRetryAnalysisJob,
+  session, sites, incidents, analysisJobs, selectedSite, selectedSiteId, selectedIncident, siteName, siteEvidenceSource, autopilotStatus, status, busy,
+  onLogout, onRefresh, onSiteName, onSiteEvidenceSource, onCreateSite, onSelectSite, onAutopilotStatus, onSlsPulled, onSelectIncident, onDecision, onProtection, onRetryAnalysisJob,
 }: {
   session: Session; sites: Site[]; incidents: Incident[]; analysisJobs: AnalysisJob[]; selectedSite: Site | null; selectedSiteId: string; selectedIncident: Incident | null;
-  siteName: string; autopilotStatus: AutopilotStatus | null;
+  siteName: string; siteEvidenceSource: Site["evidence_source"]; autopilotStatus: AutopilotStatus | null;
   status: string; busy: boolean; onLogout: () => void; onRefresh: () => void; onSiteName: (value: string) => void;
-  onCreateSite: (event: FormEvent<HTMLFormElement>) => void; onSelectSite: (siteId: string) => void;
+  onSiteEvidenceSource: (value: Site["evidence_source"]) => void;
+  onCreateSite: (event: FormEvent<HTMLFormElement>) => Promise<boolean>; onSelectSite: (siteId: string) => void;
   onAutopilotStatus: (status: AutopilotStatus | null) => void; onSlsPulled: () => void;
   onSelectIncident: (incidentId: number) => void;
   onDecision: (action: "approve" | "reject", incidentId: number) => void;
@@ -37,7 +38,25 @@ export function Dashboard({
   onRetryAnalysisJob: (jobId: number) => void;
 }) {
   const [activeView, setActiveView] = useState<DashboardView>("overview");
+  const [addSiteOpen, setAddSiteOpen] = useState(false);
   const attentionCount = incidents.filter((incident) => incident.status === "needs_review").length;
+
+  useEffect(() => {
+    if (selectedSite?.evidence_source === "alibaba_autopilot" && autopilotStatus && !autopilotStatus.logs_connected) {
+      setActiveView("overview");
+    }
+  }, [selectedSite?.site_id, selectedSite?.evidence_source, autopilotStatus?.logs_connected]);
+
+  async function addSite(event: FormEvent<HTMLFormElement>) {
+    if (await onCreateSite(event)) setAddSiteOpen(false);
+  }
+
+  function closeAddSite() {
+    if (busy) return;
+    onSiteName("");
+    onSiteEvidenceSource("browser");
+    setAddSiteOpen(false);
+  }
 
   function openIncident(incidentId: number) {
     onSelectIncident(incidentId);
@@ -47,7 +66,7 @@ export function Dashboard({
   const viewCopy: Record<DashboardView, { eyebrow: string; title: string; description: string }> = {
     overview: { eyebrow: "Overview", title: selectedSite?.name || "No website connected", description: "Reports and connection status for this website." },
     incidents: { eyebrow: "Incidents", title: "Security reports", description: "Review what happened and decide whether SecAi should act." },
-    protection: { eyebrow: "Protection", title: "Evidence and protection", description: "Connect website activity and see whether approved protection is available." },
+    protection: { eyebrow: "Connections", title: "Optional connections", description: "Manage browser monitoring, Discord delivery, and additional websites." },
   };
 
   return (
@@ -60,11 +79,12 @@ export function Dashboard({
             {sites.length === 0 ? <option value="">No website connected</option> : null}
             {sites.map((site) => <option key={site.site_id} value={site.site_id}>{site.name}</option>)}
           </select>
+          <button type="button" className="sidebar-add-site" onClick={() => setAddSiteOpen(true)} disabled={busy}><Plus size={15} /> Add another website</button>
         </div>
         <nav className="dashboard-nav" aria-label="Dashboard">
           <button type="button" aria-current={activeView === "overview" ? "page" : undefined} className={activeView === "overview" ? "active" : ""} onClick={() => setActiveView("overview")}><Home size={18} aria-hidden="true" /> Overview</button>
           <button type="button" aria-current={activeView === "incidents" ? "page" : undefined} className={activeView === "incidents" ? "active" : ""} onClick={() => setActiveView("incidents")}><BellRing size={18} aria-hidden="true" /> Incidents {attentionCount ? <span>{attentionCount}</span> : null}</button>
-          <button type="button" aria-current={activeView === "protection" ? "page" : undefined} className={activeView === "protection" ? "active" : ""} onClick={() => setActiveView("protection")}><ShieldCheck size={18} aria-hidden="true" /> Protection</button>
+          <button type="button" aria-current={activeView === "protection" ? "page" : undefined} className={activeView === "protection" ? "active" : ""} onClick={() => setActiveView("protection")}><ShieldCheck size={18} aria-hidden="true" /> Connections</button>
         </nav>
         <div className="sidebar-account"><span className="account-avatar">{session.user.email.slice(0, 1).toUpperCase()}</span><span><strong>{session.user.email}</strong><small>Website owner</small></span><button type="button" onClick={onLogout} aria-label="Log out"><LogOut size={17} /></button></div>
       </aside>
@@ -77,7 +97,7 @@ export function Dashboard({
         {status !== "Your reports are up to date." && !busy ? <div className="workspace-message" role="status" aria-live="polite">{status}</div> : null}
 
         {activeView === "overview" ? (
-          <OverviewPage incidents={incidents} analysisJobs={analysisJobs} autopilotStatus={autopilotStatus} onOpenIncidents={() => setActiveView("incidents")} onOpenProtection={() => setActiveView("protection")} onOpenIncident={openIncident} />
+          <OverviewPage session={session} site={selectedSite} incidents={incidents} analysisJobs={analysisJobs} autopilotStatus={autopilotStatus} busy={busy} onAutopilotStatus={onAutopilotStatus} onSlsPulled={onSlsPulled} onOpenIncidents={() => setActiveView("incidents")} onOpenProtection={() => setActiveView("protection")} onOpenIncident={openIncident} />
         ) : null}
 
         {activeView === "incidents" ? (
@@ -89,20 +109,38 @@ export function Dashboard({
 
         {activeView === "protection" ? (
           <section className="protection-page">
-            <SiteSetup siteName={siteName} sites={sites} selectedSite={selectedSite} selectedSiteId={selectedSiteId} busy={busy} onSiteName={onSiteName} onCreateSite={onCreateSite} onSelectSite={onSelectSite} />
-            <SetupChoices session={session} site={selectedSite} autopilotStatus={autopilotStatus} busy={busy} onAutopilotStatus={onAutopilotStatus} onSlsPulled={onSlsPulled} />
+            <SetupChoices session={session} site={selectedSite} busy={busy} />
           </section>
         ) : null}
       </main>
+
+      {addSiteOpen ? (
+        <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) closeAddSite(); }} onKeyDown={(event) => { if (event.key === "Escape") closeAddSite(); }}>
+          <section className="site-modal" role="dialog" aria-modal="true" aria-labelledby="add-site-title">
+            <div className="site-modal-header"><div><p className="eyebrow">New website</p><h2 id="add-site-title">Add a website</h2></div><button type="button" className="ghost-button modal-close" onClick={closeAddSite} disabled={busy} aria-label="Close"><X size={18} /></button></div>
+            <p>Create a separate workspace for this website and choose its primary evidence source.</p>
+            <form className="site-modal-form" onSubmit={addSite}>
+              <label>Website name<input value={siteName} onChange={(event) => onSiteName(event.target.value)} placeholder="For example, Northstar Shop" autoFocus required /></label>
+              <label>Evidence source<select value={siteEvidenceSource} onChange={(event) => onSiteEvidenceSource(event.target.value as Site["evidence_source"])}><option value="browser">Website script</option><option value="alibaba_autopilot">Alibaba Cloud</option></select></label>
+              <div className="site-modal-actions"><button type="button" className="secondary-button" onClick={closeAddSite} disabled={busy}>Cancel</button><button type="submit" disabled={busy || !siteName.trim()}><Plus size={16} /> {busy ? "Adding…" : "Add website"}</button></div>
+            </form>
+          </section>
+        </div>
+      ) : null}
     </div>
   );
 }
 
-function OverviewPage({ incidents, analysisJobs, autopilotStatus, onOpenIncidents, onOpenProtection, onOpenIncident }: {
-  incidents: Incident[]; analysisJobs: AnalysisJob[]; autopilotStatus: AutopilotStatus | null;
+function OverviewPage({ session, site, incidents, analysisJobs, autopilotStatus, busy, onAutopilotStatus, onSlsPulled, onOpenIncidents, onOpenProtection, onOpenIncident }: {
+  session: Session; site: Site | null; incidents: Incident[]; analysisJobs: AnalysisJob[]; autopilotStatus: AutopilotStatus | null; busy: boolean;
+  onAutopilotStatus: (status: AutopilotStatus | null) => void; onSlsPulled: () => void;
   onOpenIncidents: () => void; onOpenProtection: () => void; onOpenIncident: (id: number) => void;
 }) {
   const cloudConnected = Boolean(autopilotStatus?.logs_connected);
+  const usesAlibaba = site?.evidence_source === "alibaba_autopilot";
+  const openConnection = usesAlibaba
+    ? () => document.getElementById("alibaba-connection")?.scrollIntoView({ behavior: "smooth", block: "start" })
+    : onOpenProtection;
   const attention = incidents.filter((incident) => incident.status === "needs_review");
   const activeInvestigations = analysisJobs.filter((job) => ["queued", "running"].includes(job.status));
   const failedInvestigations = analysisJobs.filter((job) => job.status === "failed");
@@ -126,13 +164,21 @@ function OverviewPage({ incidents, analysisJobs, autopilotStatus, onOpenIncident
     <div className="overview-page">
       <section className={`overview-status ${attention.length || failedInvestigations.length ? "needs-attention" : "all-clear"}`}>
         <div><h2>{overviewTitle}</h2><p>{overviewDescription}</p></div>
-        <button type="button" className={hasActivity ? "" : "secondary-button"} onClick={hasActivity ? onOpenIncidents : onOpenProtection}>{hasActivity ? "View activity" : "Check connections"}<ArrowRight size={16} /></button>
+        <button type="button" className={hasActivity ? "" : "secondary-button"} onClick={hasActivity ? onOpenIncidents : openConnection}>{hasActivity ? "View activity" : usesAlibaba && !cloudConnected ? "Finish Alibaba setup" : "Check connections"}<ArrowRight size={16} /></button>
       </section>
+
+      {usesAlibaba ? (
+        <section id="alibaba-connection" className="panel-section overview-connection-panel">
+          <div className="section-header"><div className="section-title"><ShieldCheck size={20} /><div><p className="eyebrow">Evidence source</p><h2>Alibaba Cloud connection</h2></div></div></div>
+          <p>Connect this website&apos;s Alibaba Cloud activity so SecAi can investigate trusted server evidence. Completed connection details stay read-only until you choose Edit.</p>
+          {autopilotStatus ? <AlibabaAutopilotSetup session={session} site={site} status={autopilotStatus} busy={busy} onStatus={onAutopilotStatus} onLogsPulled={onSlsPulled} /> : <p className="helper-text">Loading Alibaba Cloud connection…</p>}
+        </section>
+      ) : null}
 
       <section className="overview-facts">
         <span><strong>{attention.length}</strong><small>Waiting for you</small></span>
         <span><strong>{activeInvestigations.length}</strong><small>Being investigated</small></span>
-        <span><strong>{cloudConnected ? "Alibaba Cloud" : "Website script"}</strong><small>Evidence source</small></span>
+        <span><strong>{usesAlibaba ? "Alibaba Cloud" : "Website script"}</strong><small>Evidence source</small></span>
       </section>
 
       <div className="overview-columns">
@@ -143,32 +189,17 @@ function OverviewPage({ incidents, analysisJobs, autopilotStatus, onOpenIncident
 
         <section className="overview-section connection-summary">
           <h2>Monitoring method</h2>
-          <strong>{cloudConnected ? "Alibaba Cloud activity" : "Website monitoring script"}</strong>
-          <p>{cloudConnected ? "SecAi can investigate trusted website activity and carry out a temporary protective change after you approve it." : "The script works on any website and reports suspicious browser activity. It cannot see requests that bypass the browser, so attackers can avoid it."}</p>
-          <button type="button" className="secondary-button" onClick={onOpenProtection}>{cloudConnected ? "Manage connection" : "Compare connection options"}<ArrowRight size={15} /></button>
+          <strong>{usesAlibaba ? "Alibaba Cloud activity" : "Website monitoring script"}</strong>
+          <p>{usesAlibaba ? (cloudConnected ? "SecAi can investigate trusted website activity and carry out a temporary protective change after you approve it." : "Finish connecting Alibaba Cloud above before SecAi can investigate trusted website activity.") : "The script works on any website and reports suspicious browser activity. It cannot see requests that bypass the browser, so attackers can avoid it."}</p>
+          <button type="button" className="secondary-button" onClick={openConnection}>{usesAlibaba ? (cloudConnected ? "View connection" : "Finish setup") : "Manage connections"}<ArrowRight size={15} /></button>
         </section>
       </div>
     </div>
   );
 }
 
-function SiteSetup({ siteName, sites, selectedSite, selectedSiteId, busy, onSiteName, onCreateSite, onSelectSite }: {
-  siteName: string; sites: Site[]; selectedSite: Site | null; selectedSiteId: string; busy: boolean;
-  onSiteName: (value: string) => void; onCreateSite: (event: FormEvent<HTMLFormElement>) => void; onSelectSite: (siteId: string) => void;
-}) {
-  return (
-    <section className="panel-section site-management">
-      <div className="section-header"><div className="section-title"><Globe2 size={20} /><div><p className="eyebrow">Website</p><h2>{selectedSite?.name || "Connect your first website"}</h2></div></div></div>
-      <p>{selectedSite ? "These settings apply only to this website. Choose another website at any time." : "Add a name first. SecAi will then help you connect website activity."}</p>
-      {sites.length > 1 ? <label>Website to manage<select value={selectedSiteId} onChange={(event) => onSelectSite(event.target.value)} disabled={busy}>{sites.map((site) => <option key={site.site_id} value={site.site_id}>{site.name}</option>)}</select></label> : null}
-      <details className="add-site-details" open={!selectedSite}><summary><Plus size={16} /> Add another website</summary><form className="mini-form" onSubmit={onCreateSite}><label>Website name<input value={siteName} onChange={(event) => onSiteName(event.target.value)} placeholder="For example, Northstar Shop" required /></label><button type="submit" disabled={busy}><Plus size={16} /> Add website</button></form></details>
-    </section>
-  );
-}
-
-function SetupChoices({ session, site, autopilotStatus, busy, onAutopilotStatus, onSlsPulled }: {
-  session: Session; site: Site | null; autopilotStatus: AutopilotStatus | null; busy: boolean;
-  onAutopilotStatus: (status: AutopilotStatus | null) => void; onSlsPulled: () => void;
+function SetupChoices({ session, site, busy }: {
+  session: Session; site: Site | null; busy: boolean;
 }) {
   const snippet = site ? `<script src="${session.apiBase}/api/integrations/browser.js?site_id=${site.site_id}"></script>` : "";
   const [copied, setCopied] = useState(false);
@@ -198,13 +229,15 @@ function SetupChoices({ session, site, autopilotStatus, busy, onAutopilotStatus,
 
   return (
     <section className="panel-section connection-panel">
-      <div className="section-header"><div className="section-title"><Wifi size={20} /><div><p className="eyebrow">Monitoring method</p><h2>Choose how SecAi watches your website</h2></div></div></div>
-      <p>There are two ways to connect a website. Alibaba Cloud is recommended but only available for websites hosted there. The monitoring script works anywhere, with the limitations explained below.</p>
-      <div className="connection-choice recommended-connection"><span className="connection-icon"><CloudCog size={21} /></span><div><strong>Connect Alibaba Cloud</strong><p>SecAi can see requests reaching your website, giving it more complete and reliable evidence. It can also carry out a temporary protective change after you approve it.</p><small>For websites hosted on Alibaba Cloud. You approve a temporary role in the website owner&apos;s account; SecAi never asks for permanent AccessKeys.</small></div><strong className="recommendation-label">Recommended</strong></div>
-      <AlibabaAutopilotSetup session={session} site={site} status={autopilotStatus} busy={busy} onStatus={onAutopilotStatus} onLogsPulled={onSlsPulled} />
-      <div className="cloud-divider"><Globe2 size={19} /><span><strong>Or add a monitoring script</strong><small>Works with any website</small></span></div>
-      <div className="connection-choice browser-connection"><span className="connection-icon"><Globe2 size={21} /></span><div><strong>Add a monitoring script</strong><p>Quick to install and works with any website. It can notice attack-like entries and unusually rapid use of forms that submit back to your website.</p><small>It only sees form activity inside a visitor's browser. Direct requests are invisible, and attackers can bypass it by disabling JavaScript.</small></div></div>
-      <details className="install-details"><summary><Clipboard size={16} /> Show monitoring script</summary><p>Paste this before the closing <code>&lt;/body&gt;</code> tag on every page that should be monitored. It skips recognized sensitive fields and sends a field value only when it matches an attack pattern; rapid-submission warnings contain no form values.</p><p>If the website uses a Content Security Policy, allow the SecAi address in both <code>script-src</code> and <code>connect-src</code>.</p><pre>{snippet || "Add a website first to create its installation code."}</pre><button type="button" className="secondary-button" disabled={!snippet} onClick={copySnippet}><Clipboard size={15} /> {copied ? "Copied" : "Copy code"}</button></details>
+      <div className="section-header"><div className="section-title"><Wifi size={20} /><div><p className="eyebrow">Optional connections</p><h2>{site?.evidence_source === "browser" ? "Browser monitoring and report delivery" : "Report delivery"}</h2></div></div></div>
+      <p>{site?.evidence_source === "browser" ? "Install the selected browser monitoring script and optionally connect Discord delivery." : "Alibaba Cloud setup lives on Overview. Use this page for optional Discord delivery."}</p>
+      {site?.evidence_source === "browser" ? (
+        <>
+          <div className="cloud-divider"><Globe2 size={19} /><span><strong>Add a monitoring script</strong><small>Works with any website</small></span></div>
+          <div className="connection-choice browser-connection"><span className="connection-icon"><Globe2 size={21} /></span><div><strong>Add a monitoring script</strong><p>Quick to install and works with any website. It can notice attack-like entries and unusually rapid use of forms that submit back to your website.</p><small>It only sees form activity inside a visitor's browser. Direct requests are invisible, and attackers can bypass it by disabling JavaScript.</small></div></div>
+          <details className="install-details"><summary><Clipboard size={16} /> Show monitoring script</summary><p>Paste this before the closing <code>&lt;/body&gt;</code> tag on every page that should be monitored. The generated URL includes this website&apos;s ID. It skips recognized sensitive fields and sends a field value only when it matches an attack pattern; rapid-submission warnings contain no form values.</p><p>If the website uses a Content Security Policy, allow the SecAi address in both <code>script-src</code> and <code>connect-src</code>.</p><pre>{snippet || "Add a website first to create its installation code."}</pre><button type="button" className="secondary-button" disabled={!snippet} onClick={copySnippet}><Clipboard size={15} /> {copied ? "Copied" : "Copy code"}</button></details>
+        </>
+      ) : null}
       <div className="cloud-divider"><MessageCircle size={19} /><span><strong>Discord reports</strong><small>Optional delivery channel</small></span></div>
       <div className="connection-choice discord-connection">
         <span className="connection-icon"><MessageCircle size={21} /></span>

@@ -45,7 +45,7 @@ export function EvidenceSourceStep({
           onClick={() => patch({ watchMethod: "browser" })}
         />
       </div>
-      {draft.watchMethod === "alibaba_autopilot" ? <p className="helper-text">After your account is created, the dashboard will generate a customer-specific role template. You approve it in your own Alibaba Cloud account, then SecAi verifies the temporary connection.</p> : null}
+      {draft.watchMethod === "alibaba_autopilot" ? <p className="helper-text">After your account is created, Overview will generate a customer-specific role template. You approve it in your own Alibaba Cloud account, then SecAi verifies the connection.</p> : null}
     </WizardCard>
   );
 }

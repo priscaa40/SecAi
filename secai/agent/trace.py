@@ -39,7 +39,7 @@ def build_agent_trace(state: SecAiState, runtime_calls: list[dict[str, Any]]) ->
         },
         "responder": {
             "decision": response.action,
-            "summary": response.executive_summary,
+            "summary": response.headline,
             "target": response.target,
             "human_checkpoint": response.human_checkpoint,
         },

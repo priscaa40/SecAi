@@ -45,6 +45,7 @@ export function IncidentReport({
 
   const action: RecommendedAction = incident.recommended_action;
   const reportSections = action.report_sections;
+  const ownerSummary = reportSections.owner_summary;
   const ownerRecommendation = action.owner_recommendation;
   const protectionStatus = action.protection_status;
   const rawTrace: AgentTraceStep[] = Array.isArray(action.agent_trace) ? action.agent_trace : [];
@@ -64,33 +65,15 @@ export function IncidentReport({
           <time>{formatDate(incident.created_at)}</time>
         </div>
         <h1>{incident.title}</h1>
-        <p className="incident-subtitle">{incident.affected_route ? `Detected on ${incident.affected_route}. ` : ""}Review the summary and recommendation below.</p>
+        <p className="incident-impact">{ownerSummary.potential_impact}</p>
+        <p className="incident-confirmation">{ownerSummary.evidence}</p>
+        <div className="incident-next-action">
+          <span>Recommended next step</span>
+          <strong>{ownerSummary.recommended_action}</strong>
+        </div>
       </header>
 
       <div className="report-body">
-        <section className="plain-report-section">
-          <div className="report-section-icon warning"><AlertTriangle size={20} /></div>
-          <div>
-            <p className="eyebrow">Summary</p>
-            <h2>{friendlyText(incident.attack_type)}</h2>
-            <p>{reportSections.summary}</p>
-            <div className="report-explanation-grid">
-              <div><strong>What is known</strong><p>{reportSections.what_happened}</p></div>
-              <div><strong>What remains unknown</strong><p>{reportSections.what_is_unknown}</p></div>
-              <div><strong>Why it matters</strong><p>{reportSections.why_it_matters}</p></div>
-            </div>
-          </div>
-        </section>
-
-        <section className="recommendation-card">
-          <div className="recommendation-heading">
-            <div className="report-section-icon safe"><ShieldCheck size={20} /></div>
-            <div><p className="eyebrow">Recommendation</p><h2>{ownerRecommendation.title}</h2></div>
-          </div>
-          <p>{ownerRecommendation.explanation}</p>
-          <ol className="next-step-list">{ownerRecommendation.steps.map((step) => <li key={step}>{step}</li>)}</ol>
-        </section>
-
         <section className={`report-card protection-status-card protection-state-${protectionStatus.state}`}>
           <div className="card-heading">
             <ShieldCheck size={19} />
@@ -116,6 +99,33 @@ export function IncidentReport({
             <p className="status-line danger-text">This report does not contain a supported single-address protection. No action can be approved from this report.</p>
           ) : null}
         </section>
+
+        <details className="explain-details recommendation-details">
+          <summary><span><ShieldCheck size={19} /><span><strong>Fix the underlying issue</strong><small>Recommended changes for your website</small></span></span><ChevronDown size={18} /></summary>
+          <div className="recommendation-card">
+            <div className="recommendation-heading">
+              <div><p className="eyebrow">Recommendation</p><h2>{ownerRecommendation.title}</h2></div>
+            </div>
+            <p>{ownerRecommendation.explanation}</p>
+            <ol className="next-step-list">{ownerRecommendation.steps.map((step) => <li key={step}>{step}</li>)}</ol>
+          </div>
+        </details>
+
+        <details className="explain-details report-findings">
+          <summary><span><AlertTriangle size={19} /><span><strong>Why SecAi raised this report</strong><small>What is known and what still needs checking</small></span></span><ChevronDown size={18} /></summary>
+          <div className="plain-report-section">
+            <div>
+              <p className="eyebrow">Technical classification</p>
+              <h2>{friendlyText(incident.attack_type)}</h2>
+            </div>
+            <p>{reportSections.summary}</p>
+            <div className="report-explanation-grid">
+              <div><strong>What is known</strong><p>{reportSections.what_happened}</p></div>
+              <div><strong>What remains unknown</strong><p>{reportSections.what_is_unknown}</p></div>
+              <div><strong>Why it matters</strong><p>{reportSections.why_it_matters}</p></div>
+            </div>
+          </div>
+        </details>
 
         <EvidencePanel evidence={evidence} />
 

@@ -1,4 +1,4 @@
-import { AlertTriangle, CheckCircle2, CircleCheckBig, Clock3, Eye, RefreshCw, ShieldCheck, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ChevronDown, CircleCheckBig, Clock3, Eye, RefreshCw, ShieldCheck, XCircle } from "lucide-react";
 import type { ReactNode } from "react";
 
 import type { Incident, IncidentEvidence, RecommendedAction } from "../types";
@@ -12,8 +12,8 @@ import {
 
 export function EvidencePanel({ evidence }: { evidence: IncidentEvidence[] }) {
   return (
-    <section className="report-card evidence-card">
-      <div className="card-heading"><Eye size={19} /><div><p className="eyebrow">Evidence</p><h2>Activity behind this report</h2></div></div>
+    <details className="explain-details evidence-details">
+      <summary><span><Eye size={19} /><span><strong>Evidence</strong><small>{evidence.length} activity record{evidence.length === 1 ? "" : "s"} behind this report</small></span></span><ChevronDown size={18} /></summary>
       <div className="evidence-list">
         {evidence.map((item, index) => {
           const route = [item.method, item.path].filter(Boolean).join(" ");
@@ -30,7 +30,7 @@ export function EvidencePanel({ evidence }: { evidence: IncidentEvidence[] }) {
           );
         })}
       </div>
-    </section>
+    </details>
   );
 }
 

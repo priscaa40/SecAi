@@ -1,4 +1,4 @@
-import { RefreshCw, ShieldCheck } from "lucide-react";
+import { ExternalLink, RefreshCw, ShieldCheck } from "lucide-react";
 import { useState } from "react";
 
 import type { AlibabaDiscoveredResources, AlibabaLogSource } from "../types";
@@ -112,6 +112,7 @@ export function AlibabaConnectorCard({
                 <option key={`${source.project}/${source.logstore}`} value={`${source.project}\n${source.logstore}`}>{source.label}</option>
               ))}
             </select>
+            <small>Select a Logstore containing only this website&apos;s access logs.</small>
           </label>
           <label>
             Approved protection target <span className="optional-label">Optional</span>
@@ -127,6 +128,14 @@ export function AlibabaConnectorCard({
             <span>
               <strong>{securityGroupId ? "Protection can be requested" : "No traffic changes"}</strong>
               <small>{securityGroupId ? "SecAi may recommend a temporary change to this group, but it cannot apply it until you approve." : "SecAi will investigate and report without changing Alibaba Cloud traffic."}</small>
+            </span>
+          </div>
+          <div className="permission-note resource-index-status">
+            <ExternalLink size={18} aria-hidden="true" />
+            <span>
+              <strong>SLS indexing is required</strong>
+              <small>Before saving, open this Logstore&apos;s <strong>Search &amp; Analysis</strong> page and select <strong>Enable Index</strong>. Add long indexes for <code>status</code> and <code>status_code</code>, and text indexes for <code>ip</code>, <code>client_ip</code>, <code>remote_addr</code>, <code>method</code>, <code>path</code>, <code>query</code>, <code>user_agent</code>, <code>message</code>, and <code>timestamp</code>. Wait about one minute before generating new test traffic.</small>
+              <a href="https://www.alibabacloud.com/help/en/sls/create-indexes" target="_blank" rel="noreferrer">Alibaba indexing guide <ExternalLink size={12} /></a>
             </span>
           </div>
         </div>

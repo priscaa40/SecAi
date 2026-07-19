@@ -17,6 +17,10 @@ class SlsNotConfigured(Exception):
     """Raised when a site has not connected Alibaba SLS."""
 
 
+class SlsReadinessError(RuntimeError):
+    """Raised when a selected Logstore cannot yet serve SecAi queries."""
+
+
 @dataclass(frozen=True)
 class SlsConnection:
     """Saved SLS coordinates and the website-specific temporary-role identity."""
@@ -94,7 +98,38 @@ def fetch_logs(conn: SlsConnection, query: str, from_time: int, to_time: int, li
         query=query,
         line=limit,
     )
-    return log_client.get_logs(request).get_logs()
+    try:
+        return log_client.get_logs(request).get_logs()
+    except Exception as exc:
+        error_code = str(getattr(exc, "get_error_code", lambda: "")() or "")
+        error_message = str(getattr(exc, "get_error_message", lambda: "")() or exc)
+        normalized = f"{error_code} {error_message}".lower()
+        if "indexconfignotexist" in normalized or "without index config" in normalized:
+            raise SlsReadinessError(
+                "This Alibaba SLS Logstore has no index configuration. In the SLS console, open the selected "
+                "Logstore's Search & Analysis page, enable indexing, create long indexes for status and status_code, "
+                "and create text indexes for ip, client_ip, remote_addr, method, path, query, user_agent, message, and "
+                "timestamp. Wait about one minute, then trigger a new test request and try again."
+            ) from exc
+        if "not configed in index" in normalized or "not configured in index" in normalized:
+            raise SlsReadinessError(
+                "The selected Alibaba SLS Logstore is missing a field index required by SecAi. Create long indexes "
+                "for status and status_code and text indexes for ip, client_ip, remote_addr, method, path, query, "
+                "user_agent, message, and timestamp, then trigger a new test request."
+            ) from exc
+        raise
+
+
+def validate_log_source(connection: SlsConnection) -> None:
+    """Verify that a selected Logstore can execute SecAi's production poll query."""
+    now = datetime.now(UTC)
+    fetch_logs(
+        connection,
+        SUSPICIOUS_QUERY,
+        int((now - timedelta(minutes=5)).timestamp()),
+        int(now.timestamp()),
+        limit=1,
+    )
 
 
 def _logs_to_events(site_id: str, logs: list[Any]) -> list[dict[str, Any]]:

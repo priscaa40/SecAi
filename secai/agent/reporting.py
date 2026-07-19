@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Any
 
 from secai import database
-from secai.agent.profiles import OwnerRecommendation, owner_recommendation
 from secai.agent.schemas import IncidentResponse, InvestigationDecision, ReviewDecision, SecurityProfileContext
 from secai.agent.validation import response_capabilities
 
@@ -25,9 +24,19 @@ def persist_incident(
     if not requires_approval:
         human_checkpoint = ""
 
-    recommendation = owner_recommendation(security_profile["id"])
     protection_status = _protection_status(response, event)
-    report_text = _report_text(response, recommendation)
+    summary = {
+        "title": response.headline,
+        "potential_impact": response.potential_impact,
+        "evidence": response.evidence_summary,
+        "recommended_action": response.recommended_action,
+    }
+    recommendation = {
+        "title": response.recommendation_title,
+        "explanation": response.recommendation_explanation,
+        "steps": response.recommendation_steps,
+    }
+    report_text = response.as_text()
     grouped_evidence = (event.get("metadata") or {}).get("evidence")
     evidence_count = len(grouped_evidence) if isinstance(grouped_evidence, list) and grouped_evidence else 1
     evidence = {
@@ -41,7 +50,7 @@ def persist_incident(
     }
     incident = {
         "site_id": event["site_id"],
-        "title": recommendation["incident_title"],
+        "title": summary["title"],
         "severity": investigation.severity,
         "status": "needs_review" if requires_approval else "reported",
         "attack_type": security_profile["name"],
@@ -61,7 +70,8 @@ def persist_incident(
             "investigation_summary": investigation.summary,
             "review_summary": review.reason,
             "report_sections": {
-                "summary": response.executive_summary,
+                "owner_summary": summary,
+                "summary": response.technical_summary,
                 "what_happened": response.what_happened,
                 "what_is_unknown": response.what_is_unknown,
                 "why_it_matters": response.why_it_matters,
@@ -79,16 +89,6 @@ def persist_incident(
         },
     }
     return database.insert_incident(incident, analysis_job_id=analysis_job_id)
-
-
-def _report_text(response: IncidentResponse, recommendation: OwnerRecommendation) -> str:
-    rendered_steps = "\n".join(f"- {step}" for step in recommendation["steps"])
-    return (
-        f"{response.as_text()}\n\n"
-        f"Recommendation: {recommendation['title']}\n"
-        f"{recommendation['explanation']}\n"
-        f"{rendered_steps}"
-    )
 
 
 def _protection_status(response: IncidentResponse, event: dict[str, Any]) -> dict[str, str]:

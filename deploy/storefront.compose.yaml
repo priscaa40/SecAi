@@ -14,7 +14,7 @@ services:
       - "9000"
     environment:
       SECAI_PUBLIC_BASE_URL: ${SECAI_PUBLIC_BASE_URL:?SECAI_PUBLIC_BASE_URL is required}
-      SECAI_SITE_ID: ${SECAI_SITE_ID:?SECAI_SITE_ID is required}
+      SECAI_SITE_ID: ${SECAI_SITE_ID:-}
       SECAI_TRUSTED_PROXY_CIDRS: ${SECAI_TRUSTED_PROXY_CIDRS:-127.0.0.1/32}
     labels:
       secai.service: storefront

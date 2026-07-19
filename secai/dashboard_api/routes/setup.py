@@ -44,7 +44,7 @@ def setup_website(request: Request, payload: PublicSetupIn) -> dict:
             session = auth_service.signup(payload.dashboard_email, payload.dashboard_password)
             owner_email = session["user"]["email"]
 
-        site = database.create_site(payload.website_name, owner_email)
+        site = database.create_site(payload.website_name, owner_email, payload.watch_method)
         messaging_setup = []
         if "dashboard" in channels:
             database.save_report_channel(site["site_id"], "dashboard", True, {})
@@ -57,7 +57,11 @@ def setup_website(request: Request, payload: PublicSetupIn) -> dict:
             "channels": sorted(channels),
             "messaging_setup": messaging_setup,
             "selected_evidence_source": payload.watch_method,
-            "snippet": f'<script src="/api/integrations/browser.js?site_id={site["site_id"]}"></script>',
+            "snippet": (
+                f'<script src="/api/integrations/browser.js?site_id={site["site_id"]}"></script>'
+                if payload.watch_method == "browser"
+                else None
+            ),
         }
     except Exception:
         if site:

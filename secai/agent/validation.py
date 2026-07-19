@@ -26,6 +26,7 @@ def validate_response_decision(
     event: dict[str, Any],
 ) -> None:
     """Ensure the response stays grounded in the investigation and source capabilities."""
+    _validate_owner_copy(response, event)
     capabilities = response_capabilities(event)
     if response.action not in capabilities["available_actions"]:
         raise ValueError(f"Action {response.action} is not available for this evidence source")
@@ -34,6 +35,38 @@ def validate_response_decision(
         response.human_checkpoint = ""
         return
     response.target = validate_remediation_target(response.action, response.target, event)
+
+
+def _validate_owner_copy(response: IncidentResponse, event: dict[str, Any]) -> None:
+    """Reject internal action labels and evidence claims the selected source cannot support."""
+    owner_fields = [
+        response.headline,
+        response.potential_impact,
+        response.evidence_summary,
+        response.recommended_action,
+        response.recommendation_title,
+        response.recommendation_explanation,
+        *response.recommendation_steps,
+    ]
+    owner_copy = " ".join(owner_fields).lower()
+    if any(label in owner_copy for label in ("block_ip", "notify_admin")):
+        raise ValueError("Owner-facing report content cannot expose internal action names")
+    if response.action == "block_ip":
+        action_copy = response.recommended_action.lower()
+        if "block" not in action_copy or "tempor" not in action_copy:
+            raise ValueError("A block action must plainly describe temporary blocking in the recommended action")
+    if event.get("source") == "browser":
+        evidence_copy = response.evidence_summary.lower()
+        unsupported_claims = (
+            "logs show",
+            "logs confirm",
+            "reached your website",
+            "reached the website",
+            "server received",
+            "server accepted",
+        )
+        if any(claim in evidence_copy for claim in unsupported_claims):
+            raise ValueError("Browser evidence cannot claim that logs or the server confirmed the activity")
 
 
 def response_capabilities(event: dict[str, Any]) -> dict[str, Any]:

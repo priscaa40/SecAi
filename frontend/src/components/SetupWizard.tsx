@@ -23,6 +23,7 @@ export function SetupWizard({
   const [step, setStep] = useState(0);
   const [draft, setDraft] = useState<SetupDraft>(initialDraft);
   const [createdSnippet, setCreatedSnippet] = useState("");
+  const [setupComplete, setSetupComplete] = useState(false);
   const [messagingSetup, setMessagingSetup] = useState<
     { channel: "discord"; setup_code: string; invite_url: string; expires_at: string }[]
   >([]);
@@ -67,11 +68,14 @@ export function SetupWizard({
         dashboard_email: draft.channels.includes("dashboard") ? draft.dashboardEmail : undefined,
         dashboard_password: draft.channels.includes("dashboard") ? draft.dashboardPassword : undefined,
       });
-      setCreatedSnippet(
-        result.snippet.startsWith("http")
-          ? result.snippet
-          : `<script src="${base}/api/integrations/browser.js?site_id=${result.site.site_id}"></script>`,
-      );
+      if (result.snippet) {
+        setCreatedSnippet(
+          result.snippet.startsWith("http")
+            ? result.snippet
+            : `<script src="${base}/api/integrations/browser.js?site_id=${result.site.site_id}"></script>`,
+        );
+      }
+      setSetupComplete(true);
       setMessagingSetup(result.messaging_setup || []);
       setMessage("Your SecAi workspace is ready.");
       if (result.session) {
@@ -116,9 +120,9 @@ export function SetupWizard({
             <span><strong>Website</strong>{draft.websiteName}</span>
             <span><strong>Evidence</strong>{watchMethodLabel(draft.watchMethod)}</span>
             <span><strong>Reports</strong>{draft.channels.map(channelLabel).join(", ")}</span>
-            <span><strong>Next step</strong>{draft.watchMethod === "alibaba_autopilot" ? "Authorize your Alibaba Cloud account from the dashboard" : "Add the monitoring script"}</span>
+            <span><strong>Next step</strong>{draft.watchMethod === "alibaba_autopilot" ? "Authorize Alibaba Cloud from Overview" : "Add the monitoring script"}</span>
           </div>
-          {createdSnippet ? (
+          {setupComplete ? (
             <div className="setup-result">
               <strong>Your SecAi workspace is ready</strong>
               {draft.watchMethod === "browser" ? (
@@ -127,7 +131,7 @@ export function SetupWizard({
                   <pre>{createdSnippet}</pre>
                 </>
               ) : (
-                <p className="helper-text">Open the dashboard to authorize this website&apos;s Alibaba Cloud role and choose its activity source. SecAi never asks for permanent AccessKeys.</p>
+                <p className="helper-text">Open Overview in the dashboard to authorize this website&apos;s Alibaba Cloud role and choose its activity source. SecAi never asks for permanent AccessKeys.</p>
               )}
               {draft.channels.includes("discord") ? (
                 <div className="callout">
@@ -170,7 +174,7 @@ export function SetupWizard({
             Continue <ArrowRight size={16} />
           </button>
         ) : (
-          <button type="button" onClick={finishSetup} disabled={!canContinue() || busy || Boolean(createdSnippet)}>
+          <button type="button" onClick={finishSetup} disabled={!canContinue() || busy || setupComplete}>
             <CheckCircle2 size={16} /> Turn on SecAi
           </button>
         )}

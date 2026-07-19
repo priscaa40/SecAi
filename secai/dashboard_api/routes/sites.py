@@ -71,7 +71,7 @@ def create_site(payload: SiteCreate, user_email: str = Depends(current_user_emai
     """Create a monitored site and return its ingest credentials."""
     if is_judge_owner(user_email):
         raise HTTPException(status_code=403, detail="The public judge account is limited to the isolated judge site.")
-    return database.create_site(payload.name, user_email)
+    return database.create_site(payload.name, user_email, payload.evidence_source)
 
 
 @router.get("")
@@ -137,6 +137,23 @@ def save_alibaba_autopilot_config(
         for item in resources["log_sources"]
     ):
         raise HTTPException(status_code=400, detail="Choose a Log Service source returned for this website role and region.")
+    if has_complete_sls:
+        assert sls_endpoint and sls_project and sls_logstore
+        try:
+            alibaba_sls.validate_log_source(
+                alibaba_sls.SlsConnection(
+                    site_id=site_id,
+                    role_arn=connection.role_arn,
+                    external_id=connection.external_id,
+                    account_id=connection.account_id,
+                    region=region,
+                    sls_endpoint=sls_endpoint,
+                    sls_project=sls_project,
+                    sls_logstore=sls_logstore,
+                )
+            )
+        except alibaba_sls.SlsReadinessError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
     if security_group_id:
         selected_group = next(
             (item for item in resources["security_groups"] if item["security_group_id"] == security_group_id),
@@ -243,7 +260,7 @@ def verify_alibaba_connection(
 def disconnect_alibaba_connection(
     site_id: str,
     user_email: str = Depends(current_user_email),
-) -> dict[str, str]:
+) -> dict[str, Any]:
     """Disconnect a customer role only when no active provider work depends on it."""
     ensure_site_owner(site_id, user_email)
     protect_judge_configuration(site_id, user_email)
@@ -254,7 +271,7 @@ def disconnect_alibaba_connection(
         )
     database.delete_alibaba_connection(site_id)
     alibaba_credentials.invalidate_assumed_role_cache()
-    return {"status": "disconnected", "site_id": site_id}
+    return alibaba_autopilot.site_status(site_id)
 
 
 @router.post("/{site_id}/alibaba-resources/discover")
@@ -299,12 +316,15 @@ def pull_alibaba_sls_logs(
     saved = database.get_alibaba_autopilot_config(site_id)
     if not saved or not all([saved.get("sls_endpoint"), saved.get("sls_project"), saved.get("sls_logstore")]):
         raise HTTPException(status_code=400, detail="Connect Alibaba Cloud logs before checking recent activity.")
-    parsed = alibaba_sls.fetch_saved_site_events(
-        site_id,
-        query=payload.query,
-        minutes=payload.minutes,
-        limit=payload.limit,
-    )
+    try:
+        parsed = alibaba_sls.fetch_saved_site_events(
+            site_id,
+            query=payload.query,
+            minutes=payload.minutes,
+            limit=payload.limit,
+        )
+    except alibaba_sls.SlsReadinessError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     result = ingest_sls_events(parsed)
     return {
         **result,

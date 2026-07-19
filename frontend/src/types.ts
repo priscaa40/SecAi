@@ -7,6 +7,7 @@ export type User = {
 export type Site = {
   site_id: string;
   name: string;
+  evidence_source: "browser" | "alibaba_autopilot";
   owner_email?: string | null;
   ingest_key: string;
   created_at?: string;
@@ -17,13 +18,18 @@ export type RecommendedAction = {
   target?: string;
   reason?: string;
   report_sections: {
+    owner_summary: {
+      title: string;
+      potential_impact: string;
+      evidence: string;
+      recommended_action: string;
+    };
     summary: string;
     what_happened: string;
     what_is_unknown: string;
     why_it_matters: string;
   };
   owner_recommendation: {
-    incident_title: string;
     title: string;
     explanation: string;
     steps: string[];
@@ -213,7 +219,7 @@ export type PublicSetupResult = {
   channels: string[];
   messaging_setup: { channel: "discord"; setup_code: string; invite_url: string; expires_at: string }[];
   selected_evidence_source: "browser" | "alibaba_autopilot";
-  snippet: string;
+  snippet: string | null;
 };
 
 export type DiscordSetup = {

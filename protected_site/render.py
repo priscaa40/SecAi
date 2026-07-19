@@ -18,11 +18,13 @@ def render_page(
     status_code: int = 200,
     extra_script: str = "",
 ) -> HTMLResponse:
-    """Render one complete HTML page with the browser monitoring snippet."""
+    """Render one complete HTML page, optionally with browser monitoring."""
     del request
-    secai_base = os.getenv("SECAI_PUBLIC_BASE_URL", "http://localhost:8000").rstrip("/")
-    site_id = os.getenv("SECAI_SITE_ID", "judge-site")
-    snippet = f'<script defer src="{html.escape(secai_base)}/api/integrations/browser.js?site_id={html.escape(site_id)}"></script>'
+    site_id = os.getenv("SECAI_SITE_ID", "").strip()
+    snippet = ""
+    if site_id:
+        secai_base = os.getenv("SECAI_PUBLIC_BASE_URL", "http://localhost:8000").rstrip("/")
+        snippet = f'<script defer src="{html.escape(secai_base)}/api/integrations/browser.js?site_id={html.escape(site_id)}"></script>'
     content = f"""
     <!doctype html>
     <html lang="en">

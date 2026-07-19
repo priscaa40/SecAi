@@ -208,10 +208,9 @@ def _approval_urls(incident: dict) -> dict[str, str]:
 def _message(incident: dict) -> str:
     """Build the human-readable incident alert text."""
     response_plan = incident.get("recommended_action", {})
-    recommendation = response_plan.get("owner_recommendation") or {}
+    report_sections = response_plan.get("report_sections") or {}
+    summary = report_sections.get("owner_summary") or {}
     protection = response_plan.get("protection_status") or {}
-    steps = recommendation.get("steps") or []
-    rendered_steps = "\n".join(f"- {step}" for step in steps[:3])
     closing = (
         "Review the temporary protection below. No traffic will change until it is approved."
         if incident.get("status") == "needs_review" and incident.get("approval_token")
@@ -220,9 +219,9 @@ def _message(incident: dict) -> str:
     content = (
         f"Security report: {incident['title']}\n"
         f"Risk: {str(incident['severity']).title()} | Route: {incident.get('affected_route') or 'Not recorded'}\n\n"
-        f"Recommendation\n{recommendation.get('title', 'Review the affected route and confirm the impact')}\n"
-        f"{recommendation.get('explanation', '')}\n"
-        f"{rendered_steps}\n\n"
+        f"{summary.get('potential_impact', '')}\n\n"
+        f"{summary.get('evidence', '')}\n"
+        f"Recommended action: {summary.get('recommended_action', 'Open the report and review the evidence.')}\n\n"
         f"Protection status\n{protection.get('title', 'Open the report for the current status')}\n"
         f"{protection.get('explanation', '')}\n\n"
         f"{closing}"

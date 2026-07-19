@@ -1,4 +1,4 @@
-import { Copy, Download, ExternalLink, RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
+import { Copy, Download, ExternalLink, Pencil, RefreshCw, ShieldCheck, Trash2, X } from "lucide-react";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 
 import {
@@ -53,6 +53,7 @@ export function AlibabaAutopilotSetup({
   const [slsProject, setSlsProject] = useState("");
   const [slsLogstore, setSlsLogstore] = useState("");
   const [message, setMessage] = useState("");
+  const [editing, setEditing] = useState(false);
   const [operation, setOperation] = useState<"" | "preparing" | "verifying" | "saving" | "checking" | "disconnecting">("");
   const currentSiteId = useRef(site?.site_id);
   const operationVersion = useRef(0);
@@ -62,6 +63,7 @@ export function AlibabaAutopilotSetup({
     operationVersion.current += 1;
     setMessage("");
     setOperation("");
+    setEditing(false);
   }, [site?.site_id]);
 
   useEffect(() => {
@@ -126,6 +128,7 @@ export function AlibabaAutopilotSetup({
         sls_logstore: slsLogstore || undefined,
       });
       onStatus(saved.status);
+      setEditing(false);
       setMessage(hasSecurityGroup
         ? "Website activity and an approved protection target are connected. Every traffic change still waits for your approval."
         : "Website activity is connected for investigation and reports. SecAi cannot change cloud traffic with this setup.");
@@ -147,11 +150,23 @@ export function AlibabaAutopilotSetup({
     }, "SecAi could not check recent website activity.");
   }
 
+  function cancelEdit() {
+    const config = status?.config;
+    setRegion(config?.region || "ap-southeast-1");
+    setSecurityGroupId(config?.security_group_id || "");
+    setSlsEndpoint(config?.sls_endpoint || "");
+    setSlsProject(config?.sls_project || "");
+    setSlsLogstore(config?.sls_logstore || "");
+    setEditing(false);
+    setMessage("");
+  }
+
   function disconnect() {
     if (!window.confirm("Disconnect Alibaba Cloud from this website? Browser monitoring will keep working.")) return;
     void runOperation("disconnecting", async (siteId) => {
-      await disconnectAlibabaConnection(session, siteId);
-      onStatus(null);
+      const next = await disconnectAlibabaConnection(session, siteId);
+      onStatus(next);
+      setEditing(false);
       setRoleArn("");
       setSecurityGroupId("");
       setSlsEndpoint("");
@@ -175,6 +190,8 @@ export function AlibabaAutopilotSetup({
   }
 
   const verified = status?.connection_status === "verified";
+  const connectionReady = Boolean(verified && status?.logs_connected);
+  const showResourceEditor = Boolean(verified && (!connectionReady || editing));
   const authorization = status?.authorization;
   const lastExecution = status?.last_execution;
   const operationBusy = busy || Boolean(operation);
@@ -183,7 +200,10 @@ export function AlibabaAutopilotSetup({
     <div className="setup-choice" aria-busy={operationBusy}>
       <div className="section-header compact">
         <div className="section-title"><ShieldCheck size={16} aria-hidden="true" /><h3>Alibaba Cloud connection</h3></div>
-        <span className={`connection-state ${verified ? "connected" : ""}`}>{verified ? "Role verified" : status?.configured ? "Authorization needed" : "Not connected"}</span>
+        <div className="connection-heading-actions">
+          <span className={`connection-state ${connectionReady ? "connected" : ""}`}>{connectionReady ? "Connected" : verified ? "Role verified" : status?.configured ? "Authorization needed" : "Not connected"}</span>
+          {connectionReady && !editing ? <button type="button" className="secondary-button compact-button" onClick={() => setEditing(true)} disabled={operationBusy}><Pencil size={14} /> Edit</button> : null}
+        </div>
       </div>
 
       {!status?.configured ? (
@@ -199,8 +219,8 @@ export function AlibabaAutopilotSetup({
         <div className="cloud-authorization-flow">
           <ol>
             <li><strong>Download the role template.</strong> It is unique to this website and trusts only SecAi&apos;s Control role with this connection&apos;s external ID.</li>
-            <li><strong>Create a stack in Alibaba Cloud ROS.</strong> Upload the template in the website owner&apos;s Alibaba account, review it, and create the stack.</li>
-            <li><strong>Copy the RoleArn output.</strong> Paste it below so SecAi can verify the temporary connection.</li>
+            <li><strong>Create a stack in Alibaba Cloud ROS.</strong> Choose &quot;Local Template&quot;, upload the template in the website owner&apos;s Alibaba account, review it, and create the stack.</li>
+            <li><strong>Copy the RoleArn output (from the "Outputs" tab).</strong> Paste it below so SecAi can verify the connection.</li>
           </ol>
           <div className="authorization-actions">
             <button type="button" className="secondary-button" onClick={downloadTemplate}><Download size={15} /> Download role template</button>
@@ -226,8 +246,9 @@ export function AlibabaAutopilotSetup({
         <>
           <div className="status-grid">
             <ReportField label="Customer account" value={status?.config?.account_id || "Verified"} />
-            <ReportField label="Website activity" value={status?.logs_connected ? "Connected" : "Choose below"} />
-            <ReportField label="Approved protection" value={status?.security_group_connected ? "Available" : "Not enabled"} />
+            <ReportField label="Region" value={status?.config?.region || region} />
+            <ReportField label="Log source" value={status?.logs_connected ? `${status.config?.sls_project} / ${status.config?.sls_logstore}` : "Choose below"} />
+            <ReportField label="Protection target" value={status?.security_group_connected ? status.config?.security_group_id || "Available" : "Observe only"} />
           </div>
           {lastExecution ? (
             <div className={`cloud-execution-summary execution-${lastExecution.status}`}>
@@ -237,32 +258,37 @@ export function AlibabaAutopilotSetup({
               {lastExecution.error_message ? <small>{lastExecution.error_message}</small> : null}
             </div>
           ) : null}
-          <form className="stack-form" onSubmit={handleSave}>
-            <AlibabaConnectorCard
-              discoverResources={(requestedRegion) => discoverAlibabaResourcesForSite(session, site!.site_id, requestedRegion)}
-              region={region}
-              securityGroupId={securityGroupId}
-              slsEndpoint={slsEndpoint}
-              slsProject={slsProject}
-              slsLogstore={slsLogstore}
-              disabled={!site || operationBusy}
-              onRegion={(value) => {
-                setRegion(value); setSecurityGroupId(""); setSlsEndpoint(""); setSlsProject(""); setSlsLogstore("");
-              }}
-              onLogSource={(source) => {
-                setSlsEndpoint(source?.endpoint || ""); setSlsProject(source?.project || ""); setSlsLogstore(source?.logstore || "");
-              }}
-              onSecurityGroup={setSecurityGroupId}
-            />
-            <button type="submit" disabled={operationBusy || !site || !slsEndpoint || !slsProject || !slsLogstore}>
-              {operation === "saving" ? <RefreshCw size={15} className="spin" /> : <ShieldCheck size={15} />} {operation === "saving" ? "Saving…" : "Save resources"}
-            </button>
-          </form>
+          {showResourceEditor ? (
+            <form className="stack-form connection-editor" onSubmit={handleSave}>
+              <AlibabaConnectorCard
+                discoverResources={(requestedRegion) => discoverAlibabaResourcesForSite(session, site!.site_id, requestedRegion)}
+                region={region}
+                securityGroupId={securityGroupId}
+                slsEndpoint={slsEndpoint}
+                slsProject={slsProject}
+                slsLogstore={slsLogstore}
+                disabled={!site || operationBusy}
+                onRegion={(value) => {
+                  setRegion(value); setSecurityGroupId(""); setSlsEndpoint(""); setSlsProject(""); setSlsLogstore("");
+                }}
+                onLogSource={(source) => {
+                  setSlsEndpoint(source?.endpoint || ""); setSlsProject(source?.project || ""); setSlsLogstore(source?.logstore || "");
+                }}
+                onSecurityGroup={setSecurityGroupId}
+              />
+              <div className="authorization-actions">
+                <button type="submit" disabled={operationBusy || !site || !slsEndpoint || !slsProject || !slsLogstore}>
+                  {operation === "saving" ? <RefreshCw size={15} className="spin" /> : <ShieldCheck size={15} />} {operation === "saving" ? "Saving…" : "Save connection"}
+                </button>
+                {connectionReady ? <button type="button" className="secondary-button" onClick={cancelEdit} disabled={operationBusy}><X size={14} /> Cancel</button> : null}
+                <button type="button" className="text-button danger-text" onClick={disconnect} disabled={operationBusy}><Trash2 size={14} /> Disconnect Alibaba Cloud</button>
+              </div>
+            </form>
+          ) : null}
           <div className="authorization-actions">
             <button type="button" className="secondary-button" onClick={checkActivity} disabled={operationBusy || !status?.logs_connected}>
               <RefreshCw size={15} className={operation === "checking" ? "spin" : ""} /> {operation === "checking" ? "Checking…" : "Check recent activity"}
             </button>
-            <button type="button" className="text-button danger-text" onClick={disconnect} disabled={operationBusy}><Trash2 size={14} /> Disconnect Alibaba Cloud</button>
           </div>
         </>
       ) : null}

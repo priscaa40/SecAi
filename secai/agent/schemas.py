@@ -43,10 +43,17 @@ class ReviewDecision(AgentOutput):
 class IncidentResponse(AgentOutput):
     """Plain-language report plus one capability-safe automation decision."""
 
-    executive_summary: str
-    what_happened: str
-    what_is_unknown: str
-    why_it_matters: str
+    headline: str = Field(min_length=8, max_length=160)
+    potential_impact: str = Field(min_length=8, max_length=400)
+    evidence_summary: str = Field(min_length=8, max_length=400)
+    recommended_action: str = Field(min_length=8, max_length=400)
+    technical_summary: str = Field(min_length=8, max_length=800)
+    what_happened: str = Field(min_length=8, max_length=1200)
+    what_is_unknown: str = Field(min_length=8, max_length=800)
+    why_it_matters: str = Field(min_length=8, max_length=800)
+    recommendation_title: str = Field(min_length=8, max_length=200)
+    recommendation_explanation: str = Field(min_length=8, max_length=1000)
+    recommendation_steps: list[str] = Field(min_length=1, max_length=4)
     action: RemediationAction
     target: str = ""
     reason: str
@@ -54,11 +61,18 @@ class IncidentResponse(AgentOutput):
 
     def as_text(self) -> str:
         """Render the structured report as readable paragraphs."""
+        rendered_steps = "\n".join(f"- {step}" for step in self.recommendation_steps)
         return (
-            f"{self.executive_summary}\n\n"
+            f"{self.headline}\n\n"
+            f"{self.potential_impact}\n\n"
+            f"{self.evidence_summary}\n\n"
+            f"Recommended action: {self.recommended_action}\n\n"
+            f"Technical summary: {self.technical_summary}\n\n"
             f"What happened: {self.what_happened}\n\n"
             f"What remains unknown: {self.what_is_unknown}\n\n"
-            f"Why it matters: {self.why_it_matters}"
+            f"Why it matters: {self.why_it_matters}\n\n"
+            f"Recommendation: {self.recommendation_title}\n"
+            f"{self.recommendation_explanation}\n{rendered_steps}"
         )
 
 
