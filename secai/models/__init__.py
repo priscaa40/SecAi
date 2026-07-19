@@ -143,6 +143,7 @@ class AlibabaAutopilotConfigIn(ApiInput):
     """Request body for no-code Alibaba Cloud Autopilot setup."""
 
     region: str = Field(default="ap-southeast-1", min_length=1, max_length=80)
+    ecs_instance_id: str = Field(min_length=3, max_length=180)
     enforcement_mode: AutopilotEnforcementMode = "observe_only"
     security_group_id: str | None = Field(default=None, max_length=180)
     sls_endpoint: str | None = Field(default=None, max_length=300)

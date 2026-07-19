@@ -50,6 +50,9 @@ def verify_alibaba_connection(site_id: str, role_arn: str, account_id: str, regi
             set role_arn = ?, account_id = ?, region = ?, connection_status = 'verified',
                 connection_error = null, verified_at = ?, security_group_id = null,
                 sls_endpoint = null, sls_project = null, sls_logstore = null,
+                ecs_instance_id = null, collector_status = 'not_configured',
+                collector_error = null, collector_machine_group = null,
+                collector_config_name = null, collector_verified_at = null,
                 enforcement_mode = 'observe_only', updated_at = ?
             where site_id = ?
             """,
@@ -90,7 +93,9 @@ def save_alibaba_autopilot_config(site_id: str, config: dict[str, Any]) -> dict[
             """
             update site_alibaba_autopilot_configs
             set region = ?, security_group_id = ?, sls_endpoint = ?, sls_project = ?,
-                sls_logstore = ?, enforcement_mode = ?, updated_at = ?
+                sls_logstore = ?, ecs_instance_id = ?, collector_status = 'pending',
+                collector_error = null, collector_machine_group = ?, collector_config_name = ?,
+                collector_verified_at = null, enforcement_mode = ?, updated_at = ?
             where site_id = ?
             """,
             (
@@ -99,6 +104,9 @@ def save_alibaba_autopilot_config(site_id: str, config: dict[str, Any]) -> dict[
                 config.get("sls_endpoint"),
                 config.get("sls_project"),
                 config.get("sls_logstore"),
+                config["ecs_instance_id"],
+                config["collector_machine_group"],
+                config["collector_config_name"],
                 config["enforcement_mode"],
                 now,
                 site_id,
@@ -107,6 +115,49 @@ def save_alibaba_autopilot_config(site_id: str, config: dict[str, Any]) -> dict[
     stored = get_alibaba_autopilot_config(site_id)
     if not stored:
         raise RuntimeError("Failed to save Alibaba Autopilot settings")
+    return stored
+
+
+def mark_alibaba_collector_error(site_id: str, message: str) -> dict[str, Any]:
+    """Keep an incomplete collector visible with a safe owner-facing reason."""
+    with connect() as conn:
+        result = conn.execute(
+            """
+            update site_alibaba_autopilot_configs
+            set collector_status = 'error', collector_error = ?, collector_verified_at = null, updated_at = ?
+            where site_id = ?
+            """,
+            (message[:500], utc_now(), site_id),
+        )
+        if result.rowcount != 1:
+            raise ValueError("Configure this website's Alibaba collector before verifying it.")
+    stored = get_alibaba_autopilot_config(site_id)
+    if not stored:
+        raise RuntimeError("Failed to save Alibaba collector status")
+    return stored
+
+
+def verify_alibaba_collector(site_id: str) -> dict[str, Any]:
+    """Mark collection ready only after provider heartbeat and evidence checks pass."""
+    now = utc_now()
+    with connect() as conn:
+        result = conn.execute(
+            """
+            update site_alibaba_autopilot_configs
+            set collector_status = 'verified', collector_error = null,
+                collector_verified_at = ?, updated_at = ?
+            where site_id = ? and connection_status = 'verified'
+              and ecs_instance_id is not null and sls_endpoint is not null
+              and sls_project is not null and sls_logstore is not null
+              and collector_machine_group is not null and collector_config_name is not null
+            """,
+            (now, now, site_id),
+        )
+        if result.rowcount != 1:
+            raise ValueError("Complete this website's Alibaba collector plan before verifying it.")
+    stored = get_alibaba_autopilot_config(site_id)
+    if not stored:
+        raise RuntimeError("Failed to verify Alibaba collector")
     return stored
 
 
@@ -131,6 +182,7 @@ def list_alibaba_autopilot_configs_with_sls() -> list[dict[str, Any]]:
             """
             select * from site_alibaba_autopilot_configs
             where connection_status = 'verified'
+              and collector_status = 'verified'
               and sls_endpoint is not null and sls_project is not null and sls_logstore is not null
             order by updated_at desc
             """

@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     secai_judge_sls_endpoint: str | None = None
     secai_judge_sls_project: str | None = None
     secai_judge_sls_logstore: str | None = None
+    secai_judge_ecs_instance_id: str | None = None
     secai_max_payload_chars: int = 8000
     secai_max_request_bytes: int = 8192
     secai_recent_event_limit: int = 20

@@ -14,8 +14,9 @@ from secai.dashboard_api import auth_service
 from secai.dashboard_api.request_limits import RequestSizeLimitMiddleware
 from secai.dashboard_api.routes import approval_links, auth, health, incidents, ingest, operations, setup, sites
 from secai.dashboard_api.routes import discord as discord_routes
+from secai.event_sources import alibaba_sls
 from secai.event_sources.scheduler import start_sls_polling, stop_sls_polling
-from secai.integrations import alibaba_coordinates, alibaba_credentials, discord
+from secai.integrations import alibaba_autopilot, alibaba_coordinates, alibaba_credentials, discord
 from secai.integrations.qwen_cloud import QwenClient
 from secai.knowledge import mcp_client as security_knowledge_mcp
 from secai.security import rate_limit
@@ -37,6 +38,7 @@ async def lifespan(_: FastAPI):
             "SECAI_JUDGE_SLS_ENDPOINT": settings.secai_judge_sls_endpoint,
             "SECAI_JUDGE_SLS_PROJECT": settings.secai_judge_sls_project,
             "SECAI_JUDGE_SLS_LOGSTORE": settings.secai_judge_sls_logstore,
+            "SECAI_JUDGE_ECS_INSTANCE_ID": settings.secai_judge_ecs_instance_id,
         }
         missing = [name for name, value in judge_values.items() if not value]
         if missing:
@@ -46,6 +48,7 @@ async def lifespan(_: FastAPI):
         assert settings.secai_judge_alibaba_role_arn is not None
         assert settings.secai_judge_alibaba_external_id is not None
         assert settings.secai_judge_sls_endpoint is not None
+        assert settings.secai_judge_ecs_instance_id is not None
         judge_region = alibaba_coordinates.normalize_region(settings.secai_judge_alibaba_region)
         judge_sls_endpoint = alibaba_coordinates.validate_sls_endpoint(
             judge_region,
@@ -72,7 +75,8 @@ async def lifespan(_: FastAPI):
             judge_account_id,
             judge_region,
         )
-        database.save_alibaba_autopilot_config(
+        collector_names = alibaba_autopilot.collector_resource_names("judge-site")
+        saved_judge = database.save_alibaba_autopilot_config(
             "judge-site",
             {
                 "region": judge_region,
@@ -80,9 +84,14 @@ async def lifespan(_: FastAPI):
                 "sls_endpoint": judge_sls_endpoint,
                 "sls_project": settings.secai_judge_sls_project,
                 "sls_logstore": settings.secai_judge_sls_logstore,
+                "ecs_instance_id": settings.secai_judge_ecs_instance_id,
+                "collector_machine_group": collector_names["machine_group"],
+                "collector_config_name": collector_names["config_name"],
                 "enforcement_mode": "security_group",
             },
         )
+        alibaba_sls.verify_collector_readiness(saved_judge, minutes=1440)
+        database.verify_alibaba_collector("judge-site")
     QwenClient()
     discord_values = {
         "DISCORD_BOT_TOKEN": settings.discord_bot_token,

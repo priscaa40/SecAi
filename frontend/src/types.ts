@@ -133,6 +133,12 @@ export type AlibabaAutopilotConfig = {
   sls_endpoint?: string | null;
   sls_project?: string | null;
   sls_logstore?: string | null;
+  ecs_instance_id?: string | null;
+  collector_status: "not_configured" | "pending" | "verified" | "error";
+  collector_error?: string | null;
+  collector_machine_group?: string | null;
+  collector_config_name?: string | null;
+  collector_verified_at?: string | null;
   enforcement_mode: "observe_only" | "security_group";
   created_at: string;
   updated_at: string;
@@ -154,11 +160,22 @@ export type AlibabaSecurityGroup = {
   dedicated: boolean;
 };
 
+export type AlibabaEcsInstance = {
+  instance_id: string;
+  name: string;
+  status: string;
+  os_type: string;
+  private_ip: string;
+  security_group_ids: string[];
+  label: string;
+};
+
 export type AlibabaDiscoveredResources = {
   region: string;
   sls_endpoint: string;
   log_sources: AlibabaLogSource[];
   security_groups: AlibabaSecurityGroup[];
+  instances: AlibabaEcsInstance[];
   warnings: string[];
 };
 
@@ -180,6 +197,8 @@ export type AutopilotStatus = {
   site_id: string;
   configured: boolean;
   connection_status: "not_connected" | "pending" | "verified" | "error";
+  collector_status: "not_configured" | "pending" | "verified" | "error";
+  collector_connected: boolean;
   logs_connected: boolean;
   security_group_connected: boolean;
   autopilot_active: boolean;
@@ -187,8 +206,18 @@ export type AutopilotStatus = {
   available_actions: string[];
   config: AlibabaAutopilotConfig | null;
   authorization: AlibabaAuthorization | null;
+  collector_setup: AlibabaCollectorSetup | null;
   last_execution: RemediationExecution | null;
   failed_executions: RemediationExecution[];
+};
+
+export type AlibabaCollectorSetup = {
+  status: "not_configured" | "pending" | "verified" | "error";
+  error?: string | null;
+  instance_id: string;
+  machine_group: string;
+  config_name: string;
+  ros_template: Record<string, unknown>;
 };
 
 export type AlibabaAuthorization = {

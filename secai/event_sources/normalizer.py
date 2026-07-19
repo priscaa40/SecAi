@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from typing import Any
+from urllib.parse import unquote_plus
 
 SQLI_PATTERNS = [
     r"(\bor\b|\band\b)\s+['\"]?\d+['\"]?\s*=\s*['\"]?\d+",
@@ -36,8 +37,9 @@ def normalize_event(raw: dict[str, Any]) -> dict[str, Any]:
 
 def infer_signals(event: dict[str, Any]) -> list[str]:
     """Infer lightweight evidence hints from event fields."""
+    decoded_query = unquote_plus(str(event.get("query") or ""))
     haystack = " ".join(
-        str(value or "") for value in [event.get("path"), event.get("query"), event.get("payload")]
+        str(value or "") for value in [event.get("path"), decoded_query, event.get("payload")]
     ).lower()
     signals: list[str] = []
     if _matches_any(SQLI_PATTERNS, haystack):

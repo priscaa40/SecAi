@@ -44,10 +44,12 @@ from secai.database.cloud_report_config import (
     get_alibaba_autopilot_config,
     list_alibaba_autopilot_configs_with_sls,
     list_report_channels,
+    mark_alibaba_collector_error,
     mark_alibaba_connection_error,
     prepare_alibaba_connection,
     save_alibaba_autopilot_config,
     save_report_channel,
+    verify_alibaba_collector,
     verify_alibaba_connection,
 )
 from secai.database.connection import close_database_pool, connect, database_backend, init_db
@@ -131,6 +133,7 @@ __all__ = [
     "list_remediation_executions",
     "list_report_channels",
     "list_sites",
+    "mark_alibaba_collector_error",
     "mark_alibaba_connection_error",
     "prepare_alibaba_connection",
     "public_site_script_config",
@@ -153,5 +156,6 @@ __all__ = [
     "user_owns_site",
     "utc_now",
     "verify_ingest_key",
+    "verify_alibaba_collector",
     "verify_alibaba_connection",
 ]

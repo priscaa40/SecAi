@@ -269,11 +269,21 @@ export function disconnectAlibabaConnection(session: Session, siteId: string) {
   );
 }
 
+export function verifyAlibabaCollector(session: Session, siteId: string) {
+  return apiRequest<{ status: AutopilotStatus; readiness: { machines: number; records: number } }>(
+    session.apiBase,
+    `/api/sites/${encodeURIComponent(siteId)}/alibaba-collector/verify`,
+    { method: "POST", timeoutMs: 30000 },
+    session.token,
+  );
+}
+
 export function saveAlibabaAutopilotConfig(
   session: Session,
   siteId: string,
   body: {
     region: string;
+    ecs_instance_id: string;
     enforcement_mode: "observe_only" | "security_group";
     security_group_id?: string;
     sls_endpoint?: string;

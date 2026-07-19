@@ -5,6 +5,7 @@ import type { AlibabaDiscoveredResources, AlibabaLogSource } from "../types";
 
 export function AlibabaConnectorCard({
   region,
+  instanceId,
   securityGroupId,
   slsEndpoint,
   slsProject,
@@ -12,10 +13,12 @@ export function AlibabaConnectorCard({
   disabled = false,
   discoverResources,
   onRegion,
+  onInstance,
   onLogSource,
   onSecurityGroup,
 }: {
   region: string;
+  instanceId: string;
   securityGroupId: string;
   slsEndpoint: string;
   slsProject: string;
@@ -23,6 +26,7 @@ export function AlibabaConnectorCard({
   disabled?: boolean;
   discoverResources: (region: string) => Promise<AlibabaDiscoveredResources>;
   onRegion: (value: string) => void;
+  onInstance: (instanceId: string) => void;
   onLogSource: (source: AlibabaLogSource | null) => void;
   onSecurityGroup: (securityGroupId: string) => void;
 }) {
@@ -41,13 +45,14 @@ export function AlibabaConnectorCard({
         (source) => source.endpoint === slsEndpoint && source.project === slsProject && source.logstore === slsLogstore,
       );
       if (!sourceStillExists) onLogSource(null);
+      if (!result.instances.some((instance) => instance.instance_id === instanceId)) onInstance("");
       if (!result.security_groups.some((group) => group.security_group_id === securityGroupId && group.dedicated)) {
         onSecurityGroup("");
       }
       setMessage(
-        result.log_sources.length
-          ? "Choose the activity for this website. Protection is optional and always requires your approval."
-          : "No Log Service source was found in this region.",
+        result.log_sources.length && result.instances.length
+          ? "Choose the website server and its activity. SecAi will generate the exact installation stack next."
+          : "SecAi could not find both a running Linux ECS server and a Log Service source in this region.",
       );
     } catch (error) {
       setResources(null);
@@ -58,7 +63,10 @@ export function AlibabaConnectorCard({
   }
 
   const warnings = resources ? Array.from(new Set(resources.warnings.map(ownerFacingResourceWarning))) : [];
-  const dedicatedGroups = resources?.security_groups.filter((group) => group.dedicated) || [];
+  const selectedInstance = resources?.instances.find((instance) => instance.instance_id === instanceId);
+  const dedicatedGroups = resources?.security_groups.filter(
+    (group) => group.dedicated && selectedInstance?.security_group_ids.includes(group.security_group_id),
+  ) || [];
 
   return (
     <div className="connector-template">
@@ -98,6 +106,23 @@ export function AlibabaConnectorCard({
       {resources ? (
         <div className="connector-grid resource-selectors">
           <label>
+            Website server
+            <select
+              value={instanceId}
+              onChange={(event) => {
+                onInstance(event.target.value);
+                onSecurityGroup("");
+              }}
+              disabled={disabled}
+            >
+              <option value="">Choose the website server</option>
+              {resources.instances.map((instance) => (
+                <option key={instance.instance_id} value={instance.instance_id}>{instance.label}</option>
+              ))}
+            </select>
+            <small>The server must be running Linux and already have Docker installed.</small>
+          </label>
+          <label>
             Website activity to investigate
             <select
               value={slsEndpoint && slsProject && slsLogstore ? `${slsProject}\n${slsLogstore}` : ""}
@@ -130,12 +155,11 @@ export function AlibabaConnectorCard({
               <small>{securityGroupId ? "SecAi may recommend a temporary change to this group, but it cannot apply it until you approve." : "SecAi will investigate and report without changing Alibaba Cloud traffic."}</small>
             </span>
           </div>
-          <div className="permission-note resource-index-status">
+          <div className="permission-note resource-collection-status">
             <ExternalLink size={18} aria-hidden="true" />
             <span>
-              <strong>SLS indexing is required</strong>
-              <small>Before saving, open this Logstore&apos;s <strong>Search &amp; Analysis</strong> page and select <strong>Enable Index</strong>. Add long indexes for <code>status</code> and <code>status_code</code>, and text indexes for <code>ip</code>, <code>client_ip</code>, <code>remote_addr</code>, <code>method</code>, <code>path</code>, <code>query</code>, <code>user_agent</code>, <code>message</code>, and <code>timestamp</code>. Wait about one minute before generating new test traffic.</small>
-              <a href="https://www.alibabacloud.com/help/en/sls/create-indexes" target="_blank" rel="noreferrer">Alibaba indexing guide <ExternalLink size={12} /></a>
+              <strong>Send website access logs to this Logstore</strong>
+              <small>SecAi will generate a reviewable ROS stack that uses Cloud Assistant with administrator access on only the selected server. It installs Alibaba LoongCollector, creates the machine group and Docker collection, and enables indexing.</small>
             </span>
           </div>
         </div>

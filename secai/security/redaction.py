@@ -43,6 +43,7 @@ SLS_ALLOWED_FIELDS = {
     "host",
     "referer",
     "request_id",
+    "content",
 }
 _KEY_VALUE_SECRET = re.compile(
     r"(?i)(\b(?:password|passwd|secret|token|api[_-]?key|access[_-]?key|authorization|cookie|session|cvv|card[_-]?number)\b\s*[:=]\s*)([^\s&;,]+)"

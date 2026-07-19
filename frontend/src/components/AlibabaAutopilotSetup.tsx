@@ -7,6 +7,7 @@ import {
   prepareAlibabaConnection,
   pullAlibabaSlsLogs,
   saveAlibabaAutopilotConfig,
+  verifyAlibabaCollector,
   verifyAlibabaConnection,
 } from "../api";
 import type { AutopilotStatus, Session, Site } from "../types";
@@ -49,12 +50,13 @@ export function AlibabaAutopilotSetup({
   const [region, setRegion] = useState("ap-southeast-1");
   const [roleArn, setRoleArn] = useState("");
   const [securityGroupId, setSecurityGroupId] = useState("");
+  const [instanceId, setInstanceId] = useState("");
   const [slsEndpoint, setSlsEndpoint] = useState("");
   const [slsProject, setSlsProject] = useState("");
   const [slsLogstore, setSlsLogstore] = useState("");
   const [message, setMessage] = useState("");
   const [editing, setEditing] = useState(false);
-  const [operation, setOperation] = useState<"" | "preparing" | "verifying" | "saving" | "checking" | "disconnecting">("");
+  const [operation, setOperation] = useState<"" | "preparing" | "verifying" | "saving" | "collector" | "checking" | "disconnecting">("");
   const currentSiteId = useRef(site?.site_id);
   const operationVersion = useRef(0);
   currentSiteId.current = site?.site_id;
@@ -71,6 +73,7 @@ export function AlibabaAutopilotSetup({
     setRegion(config?.region || "ap-southeast-1");
     setRoleArn(config?.role_arn || "");
     setSecurityGroupId(config?.security_group_id || "");
+    setInstanceId(config?.ecs_instance_id || "");
     setSlsEndpoint(config?.sls_endpoint || "");
     setSlsProject(config?.sls_project || "");
     setSlsLogstore(config?.sls_logstore || "");
@@ -121,6 +124,7 @@ export function AlibabaAutopilotSetup({
       const hasSecurityGroup = Boolean(securityGroupId);
       const saved = await saveAlibabaAutopilotConfig(session, siteId, {
         region,
+        ecs_instance_id: instanceId,
         enforcement_mode: hasSecurityGroup ? "security_group" : "observe_only",
         security_group_id: securityGroupId || undefined,
         sls_endpoint: slsEndpoint || undefined,
@@ -129,9 +133,7 @@ export function AlibabaAutopilotSetup({
       });
       onStatus(saved.status);
       setEditing(false);
-      setMessage(hasSecurityGroup
-        ? "Website activity and an approved protection target are connected. Every traffic change still waits for your approval."
-        : "Website activity is connected for investigation and reports. SecAi cannot change cloud traffic with this setup.");
+      setMessage("Installation plan ready. Download and create the collector stack below to finish setup.");
     }, "SecAi could not save these resources.");
   }
 
@@ -150,10 +152,20 @@ export function AlibabaAutopilotSetup({
     }, "SecAi could not check recent website activity.");
   }
 
+  function verifyCollector() {
+    void runOperation("collector", async (siteId) => {
+      const result = await verifyAlibabaCollector(session, siteId);
+      onStatus(result.status);
+      setMessage("Alibaba Cloud is connected. SecAi confirmed the collector and received website activity.");
+      onLogsPulled();
+    }, "SecAi could not verify the Alibaba collector yet.");
+  }
+
   function cancelEdit() {
     const config = status?.config;
     setRegion(config?.region || "ap-southeast-1");
     setSecurityGroupId(config?.security_group_id || "");
+    setInstanceId(config?.ecs_instance_id || "");
     setSlsEndpoint(config?.sls_endpoint || "");
     setSlsProject(config?.sls_project || "");
     setSlsLogstore(config?.sls_logstore || "");
@@ -169,6 +181,7 @@ export function AlibabaAutopilotSetup({
       setEditing(false);
       setRoleArn("");
       setSecurityGroupId("");
+      setInstanceId("");
       setSlsEndpoint("");
       setSlsProject("");
       setSlsLogstore("");
@@ -189,9 +202,23 @@ export function AlibabaAutopilotSetup({
     window.setTimeout(() => URL.revokeObjectURL(url), 0);
   }
 
+  function downloadCollectorTemplate() {
+    if (!status?.collector_setup) return;
+    const blob = new Blob([JSON.stringify(status.collector_setup.ros_template, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `secai-${site?.site_id || "website"}-collector.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+  }
+
   const verified = status?.connection_status === "verified";
   const connectionReady = Boolean(verified && status?.logs_connected);
-  const showResourceEditor = Boolean(verified && (!connectionReady || editing));
+  const resourcesSelected = Boolean(status?.config?.ecs_instance_id && status?.config?.sls_endpoint && status?.config?.sls_project && status?.config?.sls_logstore);
+  const showResourceEditor = Boolean(verified && (!resourcesSelected || editing));
   const authorization = status?.authorization;
   const lastExecution = status?.last_execution;
   const operationBusy = busy || Boolean(operation);
@@ -201,8 +228,8 @@ export function AlibabaAutopilotSetup({
       <div className="section-header compact">
         <div className="section-title"><ShieldCheck size={16} aria-hidden="true" /><h3>Alibaba Cloud connection</h3></div>
         <div className="connection-heading-actions">
-          <span className={`connection-state ${connectionReady ? "connected" : ""}`}>{connectionReady ? "Connected" : verified ? "Role verified" : status?.configured ? "Authorization needed" : "Not connected"}</span>
-          {connectionReady && !editing ? <button type="button" className="secondary-button compact-button" onClick={() => setEditing(true)} disabled={operationBusy}><Pencil size={14} /> Edit</button> : null}
+          <span className={`connection-state ${connectionReady ? "connected" : ""}`}>{connectionReady ? "Connected" : resourcesSelected ? "Collector setup needed" : verified ? "Role verified" : status?.configured ? "Authorization needed" : "Not connected"}</span>
+          {resourcesSelected && !editing ? <button type="button" className="secondary-button compact-button" onClick={() => setEditing(true)} disabled={operationBusy}><Pencil size={14} /> Edit</button> : null}
         </div>
       </div>
 
@@ -247,7 +274,8 @@ export function AlibabaAutopilotSetup({
           <div className="status-grid">
             <ReportField label="Customer account" value={status?.config?.account_id || "Verified"} />
             <ReportField label="Region" value={status?.config?.region || region} />
-            <ReportField label="Log source" value={status?.logs_connected ? `${status.config?.sls_project} / ${status.config?.sls_logstore}` : "Choose below"} />
+            <ReportField label="Website server" value={status?.config?.ecs_instance_id || "Choose below"} />
+            <ReportField label="Log source" value={resourcesSelected ? `${status.config?.sls_project} / ${status.config?.sls_logstore}` : "Choose below"} />
             <ReportField label="Protection target" value={status?.security_group_connected ? status.config?.security_group_id || "Available" : "Observe only"} />
           </div>
           {lastExecution ? (
@@ -263,33 +291,53 @@ export function AlibabaAutopilotSetup({
               <AlibabaConnectorCard
                 discoverResources={(requestedRegion) => discoverAlibabaResourcesForSite(session, site!.site_id, requestedRegion)}
                 region={region}
+                instanceId={instanceId}
                 securityGroupId={securityGroupId}
                 slsEndpoint={slsEndpoint}
                 slsProject={slsProject}
                 slsLogstore={slsLogstore}
                 disabled={!site || operationBusy}
                 onRegion={(value) => {
-                  setRegion(value); setSecurityGroupId(""); setSlsEndpoint(""); setSlsProject(""); setSlsLogstore("");
+                  setRegion(value); setInstanceId(""); setSecurityGroupId(""); setSlsEndpoint(""); setSlsProject(""); setSlsLogstore("");
                 }}
+                onInstance={setInstanceId}
                 onLogSource={(source) => {
                   setSlsEndpoint(source?.endpoint || ""); setSlsProject(source?.project || ""); setSlsLogstore(source?.logstore || "");
                 }}
                 onSecurityGroup={setSecurityGroupId}
               />
               <div className="authorization-actions">
-                <button type="submit" disabled={operationBusy || !site || !slsEndpoint || !slsProject || !slsLogstore}>
-                  {operation === "saving" ? <RefreshCw size={15} className="spin" /> : <ShieldCheck size={15} />} {operation === "saving" ? "Saving…" : "Save connection"}
+                <button type="submit" disabled={operationBusy || !site || !instanceId || !slsEndpoint || !slsProject || !slsLogstore}>
+                  {operation === "saving" ? <RefreshCw size={15} className="spin" /> : <ShieldCheck size={15} />} {operation === "saving" ? "Preparing…" : "Create installation plan"}
                 </button>
-                {connectionReady ? <button type="button" className="secondary-button" onClick={cancelEdit} disabled={operationBusy}><X size={14} /> Cancel</button> : null}
+                {resourcesSelected ? <button type="button" className="secondary-button" onClick={cancelEdit} disabled={operationBusy}><X size={14} /> Cancel</button> : null}
                 <button type="button" className="text-button danger-text" onClick={disconnect} disabled={operationBusy}><Trash2 size={14} /> Disconnect Alibaba Cloud</button>
               </div>
             </form>
           ) : null}
-          <div className="authorization-actions">
+          {resourcesSelected && !connectionReady && !editing && status?.collector_setup ? (
+            <div className="cloud-authorization-flow collector-install-flow">
+              <ol>
+                <li><strong>Download the collector template.</strong> It is locked to server <code>{status.collector_setup.instance_id}</code> and the selected Logstore.</li>
+                <li><strong>Create a new stack in Alibaba Cloud ROS.</strong> Choose &quot;Local Template&quot;, upload the file, review the command and resources, then approve the stack.</li>
+                <li><strong>Open the website once.</strong> After the ROS stack succeeds, wait about two minutes so a fresh website record can reach SLS.</li>
+                <li><strong>Verify the connection.</strong> SecAi will check the machine heartbeat and confirm that website activity arrived.</li>
+              </ol>
+              <div className="authorization-actions">
+                <button type="button" className="secondary-button" onClick={downloadCollectorTemplate} disabled={operationBusy}><Download size={15} /> Download collector template</button>
+                <a href="https://ros.console.aliyun.com/" target="_blank" rel="noreferrer">Open Alibaba Cloud ROS <ExternalLink size={14} /></a>
+                <button type="button" onClick={verifyCollector} disabled={operationBusy}>
+                  <ShieldCheck size={15} /> {operation === "collector" ? "Verifying…" : "Verify collector"}
+                </button>
+              </div>
+              {status.config?.collector_error ? <p className="helper-text danger-text">{status.config.collector_error}</p> : null}
+            </div>
+          ) : null}
+          {connectionReady ? <div className="authorization-actions">
             <button type="button" className="secondary-button" onClick={checkActivity} disabled={operationBusy || !status?.logs_connected}>
               <RefreshCw size={15} className={operation === "checking" ? "spin" : ""} /> {operation === "checking" ? "Checking…" : "Check recent activity"}
             </button>
-          </div>
+          </div> : null}
         </>
       ) : null}
       {message ? <p className="status-line" role="status" aria-live="polite">{message}</p> : null}

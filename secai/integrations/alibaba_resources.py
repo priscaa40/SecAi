@@ -34,7 +34,13 @@ def discover(connection: AlibabaAutopilotConnection, region: str | None = None) 
         logger.warning("Alibaba ECS security-group discovery failed for %s", region, exc_info=exc)
         security_groups = []
         warnings.append("SecAi could not check whether approved protection is available in this region.")
-    if not log_sources and not security_groups and warnings:
+    try:
+        instances = _discover_instances(region, connection)
+    except Exception as exc:
+        logger.warning("Alibaba ECS instance discovery failed for %s", region, exc_info=exc)
+        instances = []
+        warnings.append("SecAi could not check the website servers in this region.")
+    if not log_sources and not security_groups and not instances and warnings:
         raise AlibabaResourceDiscoveryError(
             "Alibaba Cloud authorized the connection, but no usable resources could be read."
         )
@@ -43,6 +49,7 @@ def discover(connection: AlibabaAutopilotConnection, region: str | None = None) 
         "sls_endpoint": endpoint,
         "log_sources": log_sources,
         "security_groups": security_groups,
+        "instances": instances,
         "warnings": warnings,
     }
 
@@ -142,6 +149,60 @@ def _discover_security_groups(
     return sorted(discovered, key=lambda item: str(item["name"]).lower())
 
 
+def _discover_instances(region: str, connection: AlibabaAutopilotConnection) -> list[dict[str, Any]]:
+    """Return running Linux ECS servers eligible for collector installation."""
+    try:
+        from alibabacloud_ecs20140526 import models as ecs_models
+        from alibabacloud_ecs20140526.client import Client as EcsClient
+    except ModuleNotFoundError as exc:
+        raise AlibabaResourceDiscoveryError("The Alibaba ECS SDK is not installed.") from exc
+    client = EcsClient(alibaba_credentials.openapi_config(f"ecs.{region}.aliyuncs.com", connection))
+    instances: list[Any] = []
+    next_token: str | None = None
+    for _ in range(20):
+        request_args: dict[str, Any] = {"region_id": region, "max_results": 100, "status": "Running"}
+        if next_token:
+            request_args["next_token"] = next_token
+        response = client.describe_instances(ecs_models.DescribeInstancesRequest(**request_args))
+        payload = _as_dict(getattr(response, "body", response))
+        container = payload.get("Instances") or payload.get("instances") or {}
+        page = container.get("Instance") or container.get("instance") or []
+        instances.extend(page)
+        next_token = _field(payload, "NextToken", "next_token") or None
+        if not next_token:
+            break
+    discovered = []
+    for raw_instance in instances:
+        item = _as_dict(raw_instance)
+        os_type = _field(item, "OSType", "os_type").lower()
+        if os_type and os_type != "linux":
+            continue
+        instance_id = _field(item, "InstanceId", "instance_id")
+        if not instance_id:
+            continue
+        private_ips = _nested_list(item, ("VpcAttributes", "vpc_attributes"), ("PrivateIpAddress", "private_ip_address"), ("IpAddress", "ip_address"))
+        if not private_ips:
+            private_ips = _nested_list(item, ("InnerIpAddress", "inner_ip_address"), ("IpAddress", "ip_address"))
+        security_group_ids = _nested_list(
+            item,
+            ("SecurityGroupIds", "security_group_ids"),
+            ("SecurityGroupId", "security_group_id"),
+        )
+        name = _field(item, "InstanceName", "instance_name") or instance_id
+        discovered.append(
+            {
+                "instance_id": instance_id,
+                "name": name,
+                "status": _field(item, "Status", "status") or "Running",
+                "os_type": os_type or "linux",
+                "private_ip": private_ips[0] if private_ips else "",
+                "security_group_ids": security_group_ids,
+                "label": f"{name} · {instance_id}",
+            }
+        )
+    return sorted(discovered, key=lambda item: str(item["label"]).lower())
+
+
 def security_group_is_dedicated(connection: AlibabaAutopilotConnection) -> bool:
     """Re-check that the saved write target still belongs to exactly one ECS instance."""
     if not connection.security_group_id:
@@ -169,3 +230,15 @@ def _field(value: Any, *names: str) -> str:
         if candidate is not None:
             return str(candidate)
     return ""
+
+
+def _nested_list(value: Any, *levels: tuple[str, ...]) -> list[str]:
+    current: Any = value
+    for names in levels:
+        item = _as_dict(current)
+        current = next((item[name] for name in names if name in item), None)
+        if current is None:
+            return []
+    if not isinstance(current, list):
+        return []
+    return [str(item) for item in current if str(item)]

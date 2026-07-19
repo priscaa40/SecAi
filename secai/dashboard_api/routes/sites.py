@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import replace
 from typing import Any
 
@@ -27,6 +28,7 @@ from secai.models import (
 )
 
 router = APIRouter(prefix="/api/sites", tags=["sites"])
+logger = logging.getLogger(__name__)
 
 
 @router.delete("/{site_id}")
@@ -90,15 +92,15 @@ def save_alibaba_autopilot_config(
     ensure_site_owner(site_id, user_email)
     protect_judge_configuration(site_id, user_email)
     security_group_id = payload.security_group_id.strip() if payload.security_group_id else None
+    ecs_instance_id = payload.ecs_instance_id.strip()
     if payload.enforcement_mode == "security_group" and not security_group_id:
         raise HTTPException(
             status_code=400, detail="Alibaba ECS security group ID is required for Autopilot enforcement."
         )
-    has_partial_sls = any([payload.sls_endpoint, payload.sls_project, payload.sls_logstore])
     has_complete_sls = all([payload.sls_endpoint, payload.sls_project, payload.sls_logstore])
-    if has_partial_sls and not has_complete_sls:
+    if not has_complete_sls:
         raise HTTPException(
-            status_code=400, detail="Log Service endpoint, project, and logstore are all required when connecting logs."
+            status_code=400, detail="Log Service endpoint, project, and Logstore are required for Alibaba setup."
         )
     try:
         region = alibaba_coordinates.normalize_region(payload.region)
@@ -116,6 +118,10 @@ def save_alibaba_autopilot_config(
             saved["region"] != region
             or saved.get("security_group_id") != security_group_id
             or saved["enforcement_mode"] != payload.enforcement_mode
+            or saved.get("ecs_instance_id") != ecs_instance_id
+            or saved.get("sls_endpoint") != (payload.sls_endpoint.strip() if payload.sls_endpoint else None)
+            or saved.get("sls_project") != (payload.sls_project.strip() if payload.sls_project else None)
+            or saved.get("sls_logstore") != (payload.sls_logstore.strip() if payload.sls_logstore else None)
         )
     )
     if provider_coordinates_changed and _policy_that_blocks_cloud_changes(site_id):
@@ -137,23 +143,12 @@ def save_alibaba_autopilot_config(
         for item in resources["log_sources"]
     ):
         raise HTTPException(status_code=400, detail="Choose a Log Service source returned for this website role and region.")
-    if has_complete_sls:
-        assert sls_endpoint and sls_project and sls_logstore
-        try:
-            alibaba_sls.validate_log_source(
-                alibaba_sls.SlsConnection(
-                    site_id=site_id,
-                    role_arn=connection.role_arn,
-                    external_id=connection.external_id,
-                    account_id=connection.account_id,
-                    region=region,
-                    sls_endpoint=sls_endpoint,
-                    sls_project=sls_project,
-                    sls_logstore=sls_logstore,
-                )
-            )
-        except alibaba_sls.SlsReadinessError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    selected_instance = next(
+        (item for item in resources["instances"] if item["instance_id"] == ecs_instance_id),
+        None,
+    )
+    if not selected_instance:
+        raise HTTPException(status_code=400, detail="Choose a running Linux ECS server returned for this website role and region.")
     if security_group_id:
         selected_group = next(
             (item for item in resources["security_groups"] if item["security_group_id"] == security_group_id),
@@ -166,6 +161,12 @@ def save_alibaba_autopilot_config(
                 status_code=400,
                 detail="Cloud protection requires a security group attached to exactly one website server.",
             )
+        if security_group_id not in selected_instance["security_group_ids"]:
+            raise HTTPException(
+                status_code=400,
+                detail="Choose a protection group attached to the selected website server.",
+            )
+    names = alibaba_autopilot.collector_resource_names(site_id)
     try:
         config = database.save_alibaba_autopilot_config(
             site_id,
@@ -175,18 +176,49 @@ def save_alibaba_autopilot_config(
                 "sls_endpoint": sls_endpoint,
                 "sls_project": sls_project,
                 "sls_logstore": sls_logstore,
+                "ecs_instance_id": ecs_instance_id,
+                "collector_machine_group": names["machine_group"],
+                "collector_config_name": names["config_name"],
                 "enforcement_mode": payload.enforcement_mode,
             },
         )
     except database.INTEGRITY_ERRORS as exc:
         raise HTTPException(
             status_code=409,
-            detail="That log source or protection group is already assigned to another SecAi website.",
+            detail="That server, log source, or protection group is already assigned to another SecAi website.",
         ) from exc
     return {
         "config": alibaba_autopilot.public_config(config),
         "status": alibaba_autopilot.site_status(site_id),
     }
+
+
+@router.post("/{site_id}/alibaba-collector/verify")
+def verify_alibaba_collector(
+    site_id: str,
+    request: Request,
+    user_email: str = Depends(current_user_email),
+) -> dict[str, Any]:
+    """Verify provider heartbeat and real website evidence before enabling SLS polling."""
+    ensure_site_owner(site_id, user_email)
+    protect_judge_configuration(site_id, user_email)
+    enforce_request_rate(request, f"alibaba-collector-verify:{site_id}", 30, 3600)
+    saved = database.get_alibaba_autopilot_config(site_id)
+    if not saved:
+        raise HTTPException(status_code=400, detail="Start the Alibaba Cloud connection first.")
+    try:
+        readiness = alibaba_sls.verify_collector_readiness(saved)
+        database.verify_alibaba_collector(site_id)
+    except (ValueError, alibaba_sls.SlsReadinessError) as exc:
+        message = str(exc)
+        database.mark_alibaba_collector_error(site_id, message)
+        raise HTTPException(status_code=400, detail=message) from exc
+    except Exception as exc:
+        message = "SecAi could not verify the collector through this Alibaba Cloud role. Check the ROS stack result and try again."
+        logger.warning("Alibaba collector verification failed for site %s", site_id, exc_info=exc)
+        database.mark_alibaba_collector_error(site_id, message)
+        raise HTTPException(status_code=400, detail=message) from exc
+    return {"status": alibaba_autopilot.site_status(site_id), "readiness": readiness}
 
 
 @router.get("/{site_id}/alibaba-resources")
@@ -314,8 +346,12 @@ def pull_alibaba_sls_logs(
     """Pull logs from a site's saved Alibaba SLS connection."""
     ensure_site_owner(site_id, user_email)
     saved = database.get_alibaba_autopilot_config(site_id)
-    if not saved or not all([saved.get("sls_endpoint"), saved.get("sls_project"), saved.get("sls_logstore")]):
-        raise HTTPException(status_code=400, detail="Connect Alibaba Cloud logs before checking recent activity.")
+    if (
+        not saved
+        or saved.get("collector_status") != "verified"
+        or not all([saved.get("sls_endpoint"), saved.get("sls_project"), saved.get("sls_logstore")])
+    ):
+        raise HTTPException(status_code=400, detail="Finish and verify the Alibaba collector before checking activity.")
     try:
         parsed = alibaba_sls.fetch_saved_site_events(
             site_id,
@@ -323,9 +359,18 @@ def pull_alibaba_sls_logs(
             minutes=payload.minutes,
             limit=payload.limit,
         )
-    except alibaba_sls.SlsReadinessError as exc:
+    except (alibaba_sls.SlsNotConfigured, alibaba_sls.SlsReadinessError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     result = ingest_sls_events(parsed)
+    logger.info(
+        "Manual Alibaba SLS pull completed for site %s: events=%s groups=%s queued=%s filtered=%s duplicates=%s",
+        site_id,
+        result["events_seen"],
+        result["groups_seen"],
+        result["jobs_queued"],
+        result["groups_filtered"],
+        result["duplicates_skipped"],
+    )
     return {
         **result,
         "incidents": [],

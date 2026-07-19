@@ -225,11 +225,18 @@ create table if not exists site_alibaba_autopilot_configs (
     sls_endpoint text,
     sls_project text,
     sls_logstore text,
+    ecs_instance_id text,
+    collector_status text not null default 'not_configured',
+    collector_error text,
+    collector_machine_group text,
+    collector_config_name text,
+    collector_verified_at text,
     enforcement_mode text not null,
     created_at text not null,
     updated_at text not null,
     foreign key (site_id) references sites(site_id) on delete cascade,
-    check (connection_status in ('pending', 'verified', 'error'))
+    check (connection_status in ('pending', 'verified', 'error')),
+    check (collector_status in ('not_configured', 'pending', 'verified', 'error'))
 );
 
 create table if not exists site_report_channels (
@@ -284,4 +291,9 @@ def _create_indexes(conn: Any) -> None:
         "on site_alibaba_autopilot_configs(account_id, sls_endpoint, sls_project, sls_logstore) "
         "where account_id is not null and sls_endpoint is not null "
         "and sls_project is not null and sls_logstore is not null"
+    )
+    conn.execute(
+        "create unique index if not exists idx_alibaba_site_ecs_instance "
+        "on site_alibaba_autopilot_configs(account_id, region, ecs_instance_id) "
+        "where account_id is not null and ecs_instance_id is not null"
     )
