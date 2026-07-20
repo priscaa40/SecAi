@@ -78,7 +78,7 @@ def logstore_has_index(connection: AlibabaAutopilotConnection) -> bool:
                 logstore=connection.sls_logstore,
                 fromTime=now - 60,
                 toTime=now,
-                query='status >= 400 or " OR " or "union select" or "../" or "<script" or "javascript:"',
+                query='"union select"',
                 line=1,
             )
         )
@@ -91,9 +91,8 @@ def logstore_has_index(connection: AlibabaAutopilotConnection) -> bool:
             return False
         if "not configed in index" in normalized or "not configured in index" in normalized:
             raise AlibabaResourceDiscoveryError(
-                "This Logstore already has a search index, but it is missing fields SecAi needs. "
-                "In SLS Index Attributes, add number indexes for status and status_code and enable full-text "
-                "search, then try again. SecAi will keep the existing index unchanged."
+                "This Logstore already has a search index, but full-text search is not enabled. Enable full-text "
+                "search in SLS Index Attributes, then try again. SecAi will keep the existing index unchanged."
             ) from exc
         logger.warning(
             "Alibaba Log Service index inspection failed for %s/%s",

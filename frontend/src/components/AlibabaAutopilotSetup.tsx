@@ -336,11 +336,6 @@ export function AlibabaAutopilotSetup({
                 </button>
               </div>
               {status.config?.collector_error ? <p className="helper-text danger-text">{status.config.collector_error}</p> : null}
-              <details className="install-details">
-                <summary>Collector verification help</summary>
-                <p>If this website&apos;s role was created before collector setup was available, update its existing ROS role stack with the current template so SecAi can read the collector heartbeat.</p>
-                <button type="button" className="secondary-button" onClick={downloadTemplate} disabled={operationBusy || !authorization}><Download size={15} /> Download current role template</button>
-              </details>
             </div>
           ) : null}
           {connectionReady ? <div className="authorization-actions">

@@ -367,29 +367,14 @@ docker ps --filter name=^{names['container_name']}$ --filter status=running --fo
                                     {
                                         "type": "service_docker_stdout",
                                         "detail": {
-                                            "ExcludeEnv": None,
-                                            "ExcludeLabel": None,
-                                            "IncludeEnv": None,
                                             "IncludeLabel": {"secai.service": "storefront"},
                                             "Stdout": True,
                                             "Stderr": False,
                                         },
                                     }
-                                ],
-                                "processors": [
-                                    {
-                                        "type": "processor_parse_json_native",
-                                        "detail": {
-                                            "SourceKey": "content",
-                                            "KeepingSourceWhenParseFail": True,
-                                            "KeepingSourceWhenParseSucceed": False,
-                                        },
-                                    }
-                                ],
+                                ]
                             }
                         },
-                        "outputType": "LogService",
-                        "outputDetail": {"projectName": project, "logstoreName": logstore},
                     },
                 },
             },

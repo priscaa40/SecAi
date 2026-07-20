@@ -11,7 +11,7 @@ from secai.event_sources.relevance import is_sls_candidate_relevant
 from secai.integrations import alibaba_autopilot, alibaba_coordinates, alibaba_credentials
 from secai.security.redaction import sanitize_sls_contents
 
-SUSPICIOUS_QUERY = 'status >= 400 or " OR " or "union select" or "../" or "<script" or "javascript:"'
+SUSPICIOUS_QUERY = "*"
 
 
 class SlsNotConfigured(Exception):
@@ -177,14 +177,19 @@ def verify_collector_readiness(config: dict[str, Any]) -> dict[str, Any]:
     except Exception as exc:
         error_code = str(getattr(exc, "get_error_code", lambda: "")() or "")
         error_message = str(getattr(exc, "get_error_message", lambda: "")() or exc)
+        request_id = str(getattr(exc, "get_request_id", lambda: "")() or "")
         normalized = f"{error_code} {error_message}".lower()
         if any(
             marker in normalized
             for marker in ("accessdenied", "unauthorized", "forbidden", "not authorized", "permission")
         ):
+            provider_context = ", ".join(
+                part for part in (error_code or "Access denied", f"request {request_id}" if request_id else "") if part
+            )
             raise SlsReadinessError(
-                "This website's Alibaba role cannot check the collector heartbeat. Update its existing ROS role "
-                "stack with SecAi's current role template, then try again."
+                f"Alibaba rejected the collector heartbeat check ({provider_context}). Confirm the collector ROS "
+                "stack completed without failed resources and that the website role grants log:ListMachines for "
+                "the selected machine group."
             ) from exc
         if "machinegroupnotexist" in normalized or "machine group does not exist" in normalized:
             raise SlsReadinessError(

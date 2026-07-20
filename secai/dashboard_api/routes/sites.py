@@ -226,9 +226,8 @@ def verify_alibaba_collector(
         raise HTTPException(status_code=400, detail=message) from exc
     except Exception as exc:
         message = (
-            "SecAi could not read the collector heartbeat through this Alibaba Cloud role. If the collector ROS "
-            "stack succeeded, update the existing authorization stack with SecAi's current role template and try "
-            "again."
+            "SecAi could not read the collector heartbeat. Confirm the collector ROS stack completed without any "
+            "failed resources, then try again. The backend log contains Alibaba's exact error and request ID."
         )
         logger.warning("Alibaba collector verification failed for site %s", site_id, exc_info=exc)
         database.mark_alibaba_collector_error(site_id, message)
