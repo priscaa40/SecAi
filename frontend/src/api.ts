@@ -278,6 +278,15 @@ export function verifyAlibabaCollector(session: Session, siteId: string) {
   );
 }
 
+export function prepareAlibabaCollectorTemplate(session: Session, siteId: string) {
+  return apiRequest<{ status: AutopilotStatus; collector_setup: NonNullable<AutopilotStatus["collector_setup"]> }>(
+    session.apiBase,
+    `/api/sites/${encodeURIComponent(siteId)}/alibaba-collector/template`,
+    { method: "POST", timeoutMs: 30000 },
+    session.token,
+  );
+}
+
 export function saveAlibabaAutopilotConfig(
   session: Session,
   siteId: string,

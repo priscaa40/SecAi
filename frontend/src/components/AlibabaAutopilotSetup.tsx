@@ -4,6 +4,7 @@ import { type FormEvent, useEffect, useRef, useState } from "react";
 import {
   disconnectAlibabaConnection,
   discoverAlibabaResourcesForSite,
+  prepareAlibabaCollectorTemplate,
   prepareAlibabaConnection,
   pullAlibabaSlsLogs,
   saveAlibabaAutopilotConfig,
@@ -56,7 +57,7 @@ export function AlibabaAutopilotSetup({
   const [slsLogstore, setSlsLogstore] = useState("");
   const [message, setMessage] = useState("");
   const [editing, setEditing] = useState(false);
-  const [operation, setOperation] = useState<"" | "preparing" | "verifying" | "saving" | "collector" | "checking" | "disconnecting">("");
+  const [operation, setOperation] = useState<"" | "preparing" | "verifying" | "saving" | "downloading" | "collector" | "checking" | "disconnecting">("");
   const currentSiteId = useRef(site?.site_id);
   const operationVersion = useRef(0);
   currentSiteId.current = site?.site_id;
@@ -207,16 +208,24 @@ export function AlibabaAutopilotSetup({
   }
 
   function downloadCollectorTemplate() {
-    if (!status?.collector_setup) return;
-    const blob = new Blob([JSON.stringify(status.collector_setup.ros_template, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `secai-${site?.site_id || "website"}-collector.json`;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+    void runOperation("downloading", async (siteId) => {
+      const prepared = await prepareAlibabaCollectorTemplate(session, siteId);
+      onStatus(prepared.status);
+      const blob = new Blob([JSON.stringify(prepared.collector_setup.ros_template, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `secai-${siteId}-collector.json`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 0);
+      setMessage(
+        prepared.status.config?.collector_create_index
+          ? "Collector template ready. It will create the missing Logstore index."
+          : "Collector template ready. It detected and will keep the existing Logstore index.",
+      );
+    }, "SecAi could not prepare a current collector template.");
   }
 
   const verified = status?.connection_status === "verified";
@@ -329,7 +338,7 @@ export function AlibabaAutopilotSetup({
                 <li><strong>Verify the connection.</strong> SecAi checks the collector heartbeat. You do not need to wait for an attack or website visit.</li>
               </ol>
               <div className="authorization-actions">
-                <button type="button" className="secondary-button" onClick={downloadCollectorTemplate} disabled={operationBusy}><Download size={15} /> Download collector template</button>
+                <button type="button" className="secondary-button" onClick={downloadCollectorTemplate} disabled={operationBusy}><Download size={15} /> {operation === "downloading" ? "Checking Logstore…" : "Download collector template"}</button>
                 <a href="https://ros.console.aliyun.com/" target="_blank" rel="noreferrer">Open Alibaba Cloud ROS <ExternalLink size={14} /></a>
                 <button type="button" onClick={verifyCollector} disabled={operationBusy}>
                   <ShieldCheck size={15} /> {operation === "collector" ? "Verifying…" : "Verify collector"}

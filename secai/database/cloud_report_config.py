@@ -138,6 +138,29 @@ def mark_alibaba_collector_error(site_id: str, message: str) -> dict[str, Any]:
     return stored
 
 
+def refresh_alibaba_collector_index_plan(site_id: str, *, create_index: bool) -> dict[str, Any]:
+    """Refresh the index decision immediately before generating a collector template."""
+    with connect() as conn:
+        result = conn.execute(
+            """
+            update site_alibaba_autopilot_configs
+            set collector_create_index = ?, collector_status = 'pending', collector_error = null,
+                collector_verified_at = null, updated_at = ?
+            where site_id = ? and connection_status = 'verified'
+              and ecs_instance_id is not null and sls_endpoint is not null
+              and sls_project is not null and sls_logstore is not null
+              and collector_machine_group is not null and collector_config_name is not null
+            """,
+            (int(create_index), utc_now(), site_id),
+        )
+        if result.rowcount != 1:
+            raise ValueError("Choose this website's server and Logstore before downloading its collector template.")
+    stored = get_alibaba_autopilot_config(site_id)
+    if not stored:
+        raise RuntimeError("Failed to refresh Alibaba collector installation plan")
+    return stored
+
+
 def verify_alibaba_collector(site_id: str) -> dict[str, Any]:
     """Mark collection ready only after provider heartbeat and evidence checks pass."""
     now = utc_now()

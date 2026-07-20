@@ -235,6 +235,35 @@ def verify_alibaba_collector(
     return {"status": alibaba_autopilot.site_status(site_id), "readiness": readiness}
 
 
+@router.post("/{site_id}/alibaba-collector/template")
+def prepare_alibaba_collector_template(
+    site_id: str,
+    request: Request,
+    user_email: str = Depends(current_user_email),
+) -> dict[str, Any]:
+    """Re-check the Logstore index and generate a retry-safe collector template."""
+    ensure_site_owner(site_id, user_email)
+    protect_judge_configuration(site_id, user_email)
+    enforce_request_rate(request, f"alibaba-collector-template:{site_id}", 30, 3600)
+    saved = database.get_alibaba_autopilot_config(site_id)
+    if not saved:
+        raise HTTPException(status_code=400, detail="Start the Alibaba Cloud connection first.")
+    try:
+        connection = alibaba_autopilot.load_site_connection(site_id)
+        create_index = not alibaba_resource_service.logstore_has_index(connection)
+        refreshed = database.refresh_alibaba_collector_index_plan(site_id, create_index=create_index)
+        return {
+            "collector_setup": alibaba_autopilot.collector_bundle(refreshed),
+            "status": alibaba_autopilot.site_status(site_id),
+        }
+    except (
+        ValueError,
+        alibaba_autopilot.AlibabaAutopilotNotConfigured,
+        alibaba_resource_service.AlibabaResourceDiscoveryError,
+    ) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.get("/{site_id}/alibaba-resources")
 def alibaba_resources(site_id: str, user_email: str = Depends(current_user_email)) -> dict[str, Any]:
     """Return Alibaba Cloud resources connected to this SecAi site."""
