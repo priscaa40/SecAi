@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import Any
 
 from secai.integrations import alibaba_coordinates, alibaba_credentials
@@ -52,6 +53,57 @@ def discover(connection: AlibabaAutopilotConnection, region: str | None = None) 
         "instances": instances,
         "warnings": warnings,
     }
+
+
+def logstore_has_index(connection: AlibabaAutopilotConnection) -> bool:
+    """Return whether the selected Logstore already has a SecAi-compatible index."""
+    if not connection.sls_endpoint or not connection.sls_project or not connection.sls_logstore:
+        raise AlibabaResourceDiscoveryError("Choose one Log Service source before preparing its collector.")
+    try:
+        from aliyun.log import GetLogsRequest, LogClient
+    except ModuleNotFoundError as exc:
+        raise AlibabaResourceDiscoveryError("The Alibaba Log Service SDK is not installed.") from exc
+    credential = alibaba_credentials.credential_for_connection(connection)
+    client = LogClient(
+        connection.sls_endpoint,
+        credential.access_key_id,
+        credential.access_key_secret,
+        credential.security_token,
+    )
+    try:
+        now = int(time.time())
+        client.get_logs(
+            GetLogsRequest(
+                project=connection.sls_project,
+                logstore=connection.sls_logstore,
+                fromTime=now - 60,
+                toTime=now,
+                query='status >= 400 or " OR " or "union select" or "../" or "<script" or "javascript:"',
+                line=1,
+            )
+        )
+        return True
+    except Exception as exc:
+        error_code = str(getattr(exc, "get_error_code", lambda: "")() or "")
+        error_message = str(getattr(exc, "get_error_message", lambda: "")() or exc)
+        normalized = f"{error_code} {error_message}".lower()
+        if "indexconfignotexist" in normalized or "without index config" in normalized:
+            return False
+        if "not configed in index" in normalized or "not configured in index" in normalized:
+            raise AlibabaResourceDiscoveryError(
+                "This Logstore already has a search index, but it is missing fields SecAi needs. "
+                "In SLS Index Attributes, add number indexes for status and status_code and enable full-text "
+                "search, then try again. SecAi will keep the existing index unchanged."
+            ) from exc
+        logger.warning(
+            "Alibaba Log Service index inspection failed for %s/%s",
+            connection.sls_project,
+            connection.sls_logstore,
+            exc_info=exc,
+        )
+        raise AlibabaResourceDiscoveryError(
+            "SecAi could not check this Logstore's search setup. Confirm the website role can query it."
+        ) from exc
 
 
 def _discover_log_sources(endpoint: str, connection: AlibabaAutopilotConnection) -> list[dict[str, str]]:

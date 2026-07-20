@@ -13,7 +13,7 @@ from psycopg_pool import ConnectionPool
 
 from secai.settings import get_settings
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 _POSTGRES_POOL_SIZE = 5
 _pool: ConnectionPool[Any] | None = None
 _pool_url: str | None = None

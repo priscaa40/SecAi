@@ -11,10 +11,13 @@ def apply(conn: Any) -> None:
     ).fetchall()
     for row in rows:
         action = _object(row["recommended_action_json"])
-        sections = action.get("report_sections") if isinstance(action.get("report_sections"), dict) else {}
-        existing_summary = sections.get("owner_summary") if isinstance(sections.get("owner_summary"), dict) else {}
-        existing_recommendation = (
-            action.get("owner_recommendation") if isinstance(action.get("owner_recommendation"), dict) else {}
+        raw_sections = action.get("report_sections")
+        sections: dict[str, Any] = raw_sections if isinstance(raw_sections, dict) else {}
+        raw_summary = sections.get("owner_summary")
+        existing_summary: dict[str, Any] = raw_summary if isinstance(raw_summary, dict) else {}
+        raw_recommendation = action.get("owner_recommendation")
+        existing_recommendation: dict[str, Any] = (
+            raw_recommendation if isinstance(raw_recommendation, dict) else {}
         )
         recommendation_steps = existing_recommendation.get("steps")
         if not isinstance(recommendation_steps, list):

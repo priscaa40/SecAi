@@ -90,7 +90,7 @@ async def lifespan(_: FastAPI):
                 "enforcement_mode": "security_group",
             },
         )
-        alibaba_sls.verify_collector_readiness(saved_judge, minutes=1440)
+        alibaba_sls.verify_collector_readiness(saved_judge)
         database.verify_alibaba_collector("judge-site")
     QwenClient()
     discord_values = {

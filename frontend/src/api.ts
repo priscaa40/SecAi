@@ -270,7 +270,7 @@ export function disconnectAlibabaConnection(session: Session, siteId: string) {
 }
 
 export function verifyAlibabaCollector(session: Session, siteId: string) {
-  return apiRequest<{ status: AutopilotStatus; readiness: { machines: number; records: number } }>(
+  return apiRequest<{ status: AutopilotStatus; readiness: { machines: number } }>(
     session.apiBase,
     `/api/sites/${encodeURIComponent(siteId)}/alibaba-collector/verify`,
     { method: "POST", timeoutMs: 30000 },

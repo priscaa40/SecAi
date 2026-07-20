@@ -77,6 +77,7 @@ def public_config(config: dict[str, Any] | None) -> dict[str, Any] | None:
         "collector_error": config.get("collector_error"),
         "collector_machine_group": config.get("collector_machine_group"),
         "collector_config_name": config.get("collector_config_name"),
+        "collector_create_index": bool(config.get("collector_create_index")),
         "collector_verified_at": config.get("collector_verified_at"),
         "enforcement_mode": config["enforcement_mode"],
         "created_at": config["created_at"],
@@ -206,7 +207,7 @@ def authorization_bundle(config: dict[str, Any]) -> dict[str, Any]:
     }
     role_suffix = re.sub(r"[^A-Za-z0-9.-]", "-", str(config["site_id"]))
     role_name = f"secai-{role_suffix.lower()}"[:64]
-    template = {
+    template: dict[str, Any] = {
         "ROSTemplateFormatVersion": "2015-09-01",
         "Description": "Customer-managed role that lets SecAi inspect one website and apply owner-approved protection.",
         "Resources": {
@@ -266,6 +267,7 @@ def collector_bundle(config: dict[str, Any]) -> dict[str, Any]:
         f"aliyun-observability-release-registry.{region}.cr.aliyuncs.com/"
         "loongcollector/loongcollector:v3.3.3.0-f44ebb3-aliyun"
     )
+    create_index = bool(config.get("collector_create_index"))
     install_script = f"""#!/bin/sh
 set -eu
 command -v docker >/dev/null 2>&1 || {{ echo 'Docker is required on this ECS server.' >&2; exit 1; }}
@@ -281,15 +283,17 @@ docker run -d --name {names['container_name']} --restart unless-stopped \
   {image}
 docker ps --filter name=^{names['container_name']}$ --filter status=running --format '{{{{.Names}}}}' | grep -Fx {names['container_name']}
 """
-    template = {
+    template: dict[str, Any] = {
         "ROSTemplateFormatVersion": "2015-09-01",
         "Description": (
             "Install SecAi's Alibaba LoongCollector on one approved ECS server and send only "
-            "containers labelled secai.service=storefront to the selected Logstore."
+            "containers labelled secai.service=storefront to the selected Logstore. "
+            + ("Create the Logstore index because none exists." if create_index else "Keep the Logstore's existing index.")
         ),
         "Resources": {
             "SecAiLogIndex": {
                 "Type": "ALIYUN::SLS::Index",
+                "DeletionPolicy": "Retain",
                 "Properties": {
                     "ProjectName": project,
                     "LogstoreName": logstore,
@@ -307,7 +311,19 @@ docker ps --filter name=^{names['container_name']}$ --filter status=running --fo
                             "CaseSensitive": False,
                             "IncludeChinese": False,
                             "Delimiter": ",'\";=()[]{}?@&<>/:\\n\\t\\r ",
-                        }
+                        },
+                        {"Name": "status", "Type": "long", "EnableAnalytics": True},
+                        {"Name": "status_code", "Type": "long", "EnableAnalytics": True},
+                        {"Name": "ip", "Type": "text", "EnableAnalytics": True},
+                        {"Name": "client_ip", "Type": "text", "EnableAnalytics": True},
+                        {"Name": "remote_addr", "Type": "text", "EnableAnalytics": True},
+                        {"Name": "method", "Type": "text", "EnableAnalytics": True},
+                        {"Name": "path", "Type": "text", "EnableAnalytics": True},
+                        {"Name": "query", "Type": "text", "EnableAnalytics": True},
+                        {"Name": "user_agent", "Type": "text", "EnableAnalytics": True},
+                        {"Name": "http_user_agent", "Type": "text", "EnableAnalytics": True},
+                        {"Name": "message", "Type": "text", "EnableAnalytics": True},
+                        {"Name": "timestamp", "Type": "text", "EnableAnalytics": True},
                     ],
                 },
             },
@@ -359,7 +375,17 @@ docker ps --filter name=^{names['container_name']}$ --filter status=running --fo
                                             "Stderr": False,
                                         },
                                     }
-                                ]
+                                ],
+                                "processors": [
+                                    {
+                                        "type": "processor_parse_json_native",
+                                        "detail": {
+                                            "SourceKey": "content",
+                                            "KeepingSourceWhenParseFail": True,
+                                            "KeepingSourceWhenParseSucceed": False,
+                                        },
+                                    }
+                                ],
                             }
                         },
                         "outputType": "LogService",
@@ -387,6 +413,9 @@ docker ps --filter name=^{names['container_name']}$ --filter status=running --fo
             },
         },
     }
+    if not create_index:
+        template["Resources"].pop("SecAiLogIndex")
+        template["Resources"]["SecAiDockerCollection"]["DependsOn"] = ["InstallLoongCollector"]
     return {
         "status": config.get("collector_status", "pending"),
         "error": config.get("collector_error"),

@@ -1,5 +1,5 @@
 import { ExternalLink, RefreshCw, ShieldCheck } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import type { AlibabaDiscoveredResources, AlibabaLogSource } from "../types";
 
@@ -33,13 +33,18 @@ export function AlibabaConnectorCard({
   const [resources, setResources] = useState<AlibabaDiscoveredResources | null>(null);
   const [message, setMessage] = useState("");
   const [discovering, setDiscovering] = useState(false);
+  const lastAutomaticRegion = useRef("");
+  const discoveryRequest = useRef(0);
 
-  async function findResources() {
-    if (!region.trim()) return;
+  async function findResources(requestedRegion = region.trim()) {
+    if (!requestedRegion) return;
+    lastAutomaticRegion.current = requestedRegion;
+    const requestId = ++discoveryRequest.current;
     setDiscovering(true);
     setMessage("Checking the resources this website role can use…");
     try {
-      const result = await discoverResources(region.trim());
+      const result = await discoverResources(requestedRegion);
+      if (requestId !== discoveryRequest.current) return;
       setResources(result);
       const sourceStillExists = result.log_sources.some(
         (source) => source.endpoint === slsEndpoint && source.project === slsProject && source.logstore === slsLogstore,
@@ -55,12 +60,24 @@ export function AlibabaConnectorCard({
           : "SecAi could not find both a running Linux ECS server and a Log Service source in this region.",
       );
     } catch (error) {
+      if (requestId !== discoveryRequest.current) return;
       setResources(null);
       setMessage(error instanceof Error ? error.message : "SecAi could not inspect this region.");
     } finally {
-      setDiscovering(false);
+      if (requestId === discoveryRequest.current) setDiscovering(false);
     }
   }
+
+  useEffect(() => {
+    const requestedRegion = region.trim();
+    if (disabled || !requestedRegion || lastAutomaticRegion.current === requestedRegion) return;
+    const timeout = window.setTimeout(() => {
+      if (lastAutomaticRegion.current === requestedRegion) return;
+      lastAutomaticRegion.current = requestedRegion;
+      void findResources(requestedRegion);
+    }, 350);
+    return () => window.clearTimeout(timeout);
+  }, [disabled, region]);
 
   const warnings = resources ? Array.from(new Set(resources.warnings.map(ownerFacingResourceWarning))) : [];
   const selectedInstance = resources?.instances.find((instance) => instance.instance_id === instanceId);
@@ -99,8 +116,8 @@ export function AlibabaConnectorCard({
             <option value="us-west-1">Silicon Valley</option>
           </datalist>
         </label>
-        <button type="button" className="secondary-button" onClick={findResources} disabled={disabled || discovering || !region.trim()}>
-          <RefreshCw size={15} className={discovering ? "spin" : ""} aria-hidden="true" /> {discovering ? "Checking resources…" : "Find resources"}
+        <button type="button" className="secondary-button" onClick={() => void findResources()} disabled={disabled || discovering || !region.trim()}>
+          <RefreshCw size={15} className={discovering ? "spin" : ""} aria-hidden="true" /> {discovering ? "Checking resources…" : "Refresh resources"}
         </button>
       </div>
       {resources ? (
@@ -158,8 +175,8 @@ export function AlibabaConnectorCard({
           <div className="permission-note resource-collection-status">
             <ExternalLink size={18} aria-hidden="true" />
             <span>
-              <strong>Send website access logs to this Logstore</strong>
-              <small>SecAi will generate a reviewable ROS stack that uses Cloud Assistant with administrator access on only the selected server. It installs Alibaba LoongCollector, creates the machine group and Docker collection, and enables indexing.</small>
+              <strong>Connect this website&apos;s activity</strong>
+              <small>Alibaba Cloud needs server-level access to install its log collector. The setup is limited to the server and Logstore you chose, collects only this website container&apos;s access logs, and lets you review everything before approving it.</small>
             </span>
           </div>
         </div>

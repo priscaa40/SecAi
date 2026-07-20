@@ -138,6 +138,7 @@ export type AlibabaAutopilotConfig = {
   collector_error?: string | null;
   collector_machine_group?: string | null;
   collector_config_name?: string | null;
+  collector_create_index: boolean;
   collector_verified_at?: string | null;
   enforcement_mode: "observe_only" | "security_group";
   created_at: string;

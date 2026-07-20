@@ -133,7 +133,11 @@ export function AlibabaAutopilotSetup({
       });
       onStatus(saved.status);
       setEditing(false);
-      setMessage("Installation plan ready. Download and create the collector stack below to finish setup.");
+      setMessage(
+        saved.status.config?.collector_create_index
+          ? "Installation plan ready. The collector stack will add the missing Logstore search index."
+          : "Installation plan ready. The collector stack will keep the Logstore's existing search index.",
+      );
     }, "SecAi could not save these resources.");
   }
 
@@ -156,7 +160,7 @@ export function AlibabaAutopilotSetup({
     void runOperation("collector", async (siteId) => {
       const result = await verifyAlibabaCollector(session, siteId);
       onStatus(result.status);
-      setMessage("Alibaba Cloud is connected. SecAi confirmed the collector and received website activity.");
+      setMessage("Alibaba Cloud is connected. SecAi confirmed that the collector is running.");
       onLogsPulled();
     }, "SecAi could not verify the Alibaba collector yet.");
   }
@@ -289,6 +293,7 @@ export function AlibabaAutopilotSetup({
           {showResourceEditor ? (
             <form className="stack-form connection-editor" onSubmit={handleSave}>
               <AlibabaConnectorCard
+                key={site?.site_id}
                 discoverResources={(requestedRegion) => discoverAlibabaResourcesForSite(session, site!.site_id, requestedRegion)}
                 region={region}
                 instanceId={instanceId}
@@ -320,8 +325,8 @@ export function AlibabaAutopilotSetup({
               <ol>
                 <li><strong>Download the collector template.</strong> It is locked to server <code>{status.collector_setup.instance_id}</code> and the selected Logstore.</li>
                 <li><strong>Create a new stack in Alibaba Cloud ROS.</strong> Choose &quot;Local Template&quot;, upload the file, review the command and resources, then approve the stack.</li>
-                <li><strong>Open the website once.</strong> After the ROS stack succeeds, wait about two minutes so a fresh website record can reach SLS.</li>
-                <li><strong>Verify the connection.</strong> SecAi will check the machine heartbeat and confirm that website activity arrived.</li>
+                <li><strong>Wait for the collector.</strong> After the ROS stack succeeds, allow up to two minutes for LoongCollector to report that it is running.</li>
+                <li><strong>Verify the connection.</strong> SecAi checks the collector heartbeat. You do not need to wait for an attack or website visit.</li>
               </ol>
               <div className="authorization-actions">
                 <button type="button" className="secondary-button" onClick={downloadCollectorTemplate} disabled={operationBusy}><Download size={15} /> Download collector template</button>
@@ -331,6 +336,11 @@ export function AlibabaAutopilotSetup({
                 </button>
               </div>
               {status.config?.collector_error ? <p className="helper-text danger-text">{status.config.collector_error}</p> : null}
+              <details className="install-details">
+                <summary>Collector verification help</summary>
+                <p>If this website&apos;s role was created before collector setup was available, update its existing ROS role stack with the current template so SecAi can read the collector heartbeat.</p>
+                <button type="button" className="secondary-button" onClick={downloadTemplate} disabled={operationBusy || !authorization}><Download size={15} /> Download current role template</button>
+              </details>
             </div>
           ) : null}
           {connectionReady ? <div className="authorization-actions">

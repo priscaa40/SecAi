@@ -143,6 +143,16 @@ def save_alibaba_autopilot_config(
         for item in resources["log_sources"]
     ):
         raise HTTPException(status_code=400, detail="Choose a Log Service source returned for this website role and region.")
+    selected_log_connection = replace(
+        connection,
+        sls_endpoint=sls_endpoint,
+        sls_project=sls_project,
+        sls_logstore=sls_logstore,
+    )
+    try:
+        collector_create_index = not alibaba_resource_service.logstore_has_index(selected_log_connection)
+    except alibaba_resource_service.AlibabaResourceDiscoveryError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     selected_instance = next(
         (item for item in resources["instances"] if item["instance_id"] == ecs_instance_id),
         None,
@@ -179,6 +189,7 @@ def save_alibaba_autopilot_config(
                 "ecs_instance_id": ecs_instance_id,
                 "collector_machine_group": names["machine_group"],
                 "collector_config_name": names["config_name"],
+                "collector_create_index": collector_create_index,
                 "enforcement_mode": payload.enforcement_mode,
             },
         )
@@ -199,7 +210,7 @@ def verify_alibaba_collector(
     request: Request,
     user_email: str = Depends(current_user_email),
 ) -> dict[str, Any]:
-    """Verify provider heartbeat and real website evidence before enabling SLS polling."""
+    """Verify the provider heartbeat before enabling SLS polling."""
     ensure_site_owner(site_id, user_email)
     protect_judge_configuration(site_id, user_email)
     enforce_request_rate(request, f"alibaba-collector-verify:{site_id}", 30, 3600)
@@ -214,7 +225,11 @@ def verify_alibaba_collector(
         database.mark_alibaba_collector_error(site_id, message)
         raise HTTPException(status_code=400, detail=message) from exc
     except Exception as exc:
-        message = "SecAi could not verify the collector through this Alibaba Cloud role. Check the ROS stack result and try again."
+        message = (
+            "SecAi could not read the collector heartbeat through this Alibaba Cloud role. If the collector ROS "
+            "stack succeeded, update the existing authorization stack with SecAi's current role template and try "
+            "again."
+        )
         logger.warning("Alibaba collector verification failed for site %s", site_id, exc_info=exc)
         database.mark_alibaba_collector_error(site_id, message)
         raise HTTPException(status_code=400, detail=message) from exc

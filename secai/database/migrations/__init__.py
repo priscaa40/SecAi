@@ -3,7 +3,14 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from secai.database.migrations import v003_to_v004, v004_to_v005, v005_to_v006, v006_to_v007, v007_to_v008
+from secai.database.migrations import (
+    v003_to_v004,
+    v004_to_v005,
+    v005_to_v006,
+    v006_to_v007,
+    v007_to_v008,
+    v008_to_v009,
+)
 
 Migration = Callable[[Any], None]
 
@@ -13,6 +20,7 @@ MIGRATIONS: dict[int, Migration] = {
     5: v005_to_v006.apply,
     6: v006_to_v007.apply,
     7: v007_to_v008.apply,
+    8: v008_to_v009.apply,
 }
 
 

@@ -52,7 +52,7 @@ def verify_alibaba_connection(site_id: str, role_arn: str, account_id: str, regi
                 sls_endpoint = null, sls_project = null, sls_logstore = null,
                 ecs_instance_id = null, collector_status = 'not_configured',
                 collector_error = null, collector_machine_group = null,
-                collector_config_name = null, collector_verified_at = null,
+                collector_config_name = null, collector_create_index = 0, collector_verified_at = null,
                 enforcement_mode = 'observe_only', updated_at = ?
             where site_id = ?
             """,
@@ -95,7 +95,7 @@ def save_alibaba_autopilot_config(site_id: str, config: dict[str, Any]) -> dict[
             set region = ?, security_group_id = ?, sls_endpoint = ?, sls_project = ?,
                 sls_logstore = ?, ecs_instance_id = ?, collector_status = 'pending',
                 collector_error = null, collector_machine_group = ?, collector_config_name = ?,
-                collector_verified_at = null, enforcement_mode = ?, updated_at = ?
+                collector_create_index = ?, collector_verified_at = null, enforcement_mode = ?, updated_at = ?
             where site_id = ?
             """,
             (
@@ -107,6 +107,7 @@ def save_alibaba_autopilot_config(site_id: str, config: dict[str, Any]) -> dict[
                 config["ecs_instance_id"],
                 config["collector_machine_group"],
                 config["collector_config_name"],
+                int(bool(config.get("collector_create_index"))),
                 config["enforcement_mode"],
                 now,
                 site_id,

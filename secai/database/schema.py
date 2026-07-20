@@ -230,6 +230,7 @@ create table if not exists site_alibaba_autopilot_configs (
     collector_error text,
     collector_machine_group text,
     collector_config_name text,
+    collector_create_index integer not null default 0,
     collector_verified_at text,
     enforcement_mode text not null,
     created_at text not null,

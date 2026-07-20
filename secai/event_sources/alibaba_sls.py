@@ -102,8 +102,8 @@ def fetch_logs(conn: SlsConnection, query: str, from_time: int, to_time: int, li
         normalized = f"{error_code} {error_message}".lower()
         if "indexconfignotexist" in normalized or "without index config" in normalized:
             raise SlsReadinessError(
-                "This Alibaba SLS Logstore still has no index configuration. Check the SecAiLogIndex resource in "
-                "the collector ROS stack, wait about one minute after it succeeds, then create fresh website activity."
+                "This Alibaba SLS Logstore still has no search index. Reopen the website's Alibaba setup and "
+                "create a fresh collector ROS stack, wait about one minute, then create new website activity."
             ) from exc
         if "not configed in index" in normalized or "not configured in index" in normalized:
             raise SlsReadinessError(
@@ -140,8 +140,8 @@ def validate_log_source(connection: SlsConnection) -> None:
     )
 
 
-def verify_collector_readiness(config: dict[str, Any], *, minutes: int = 30) -> dict[str, Any]:
-    """Require both a fresh collector heartbeat and an actual website log record."""
+def verify_collector_readiness(config: dict[str, Any]) -> dict[str, Any]:
+    """Require a fresh heartbeat from the collector installed for this website."""
     required = (
         "role_arn",
         "external_id",
@@ -164,15 +164,34 @@ def verify_collector_readiness(config: dict[str, Any], *, minutes: int = 30) -> 
         sls_project=str(config["sls_project"]),
         sls_logstore=str(config["sls_logstore"]),
     )
-    client = _log_client(connection)
-    machines = list(
-        client.list_machines(
-            connection.sls_project,
-            str(config["collector_machine_group"]),
-            0,
-            100,
-        ).get_machines()
-    )
+    try:
+        client = _log_client(connection)
+        machines = list(
+            client.list_machines(
+                connection.sls_project,
+                str(config["collector_machine_group"]),
+                0,
+                100,
+            ).get_machines()
+        )
+    except Exception as exc:
+        error_code = str(getattr(exc, "get_error_code", lambda: "")() or "")
+        error_message = str(getattr(exc, "get_error_message", lambda: "")() or exc)
+        normalized = f"{error_code} {error_message}".lower()
+        if any(
+            marker in normalized
+            for marker in ("accessdenied", "unauthorized", "forbidden", "not authorized", "permission")
+        ):
+            raise SlsReadinessError(
+                "This website's Alibaba role cannot check the collector heartbeat. Update its existing ROS role "
+                "stack with SecAi's current role template, then try again."
+            ) from exc
+        if "machinegroupnotexist" in normalized or "machine group does not exist" in normalized:
+            raise SlsReadinessError(
+                "The collector machine group is missing. Confirm the collector ROS stack completed successfully, "
+                "then try again."
+            ) from exc
+        raise
     expected_id = alibaba_autopilot.collector_resource_names(connection.site_id)["user_defined_id"]
     now = int(datetime.now(UTC).timestamp())
     healthy = [
@@ -186,21 +205,7 @@ def verify_collector_readiness(config: dict[str, Any], *, minutes: int = 30) -> 
             "LoongCollector is not reporting from the selected server yet. Confirm the ROS stack finished "
             "successfully, wait about two minutes, and try again."
         )
-    logs = list(
-        fetch_logs(
-            connection,
-            "*",
-            int((datetime.now(UTC) - timedelta(minutes=minutes)).timestamp()),
-            int(datetime.now(UTC).timestamp()),
-            limit=1,
-        )
-    )
-    if not logs:
-        raise SlsReadinessError(
-            "LoongCollector is connected, but no website activity has reached this Logstore. Open the website "
-            "once, wait about a minute, and check again."
-        )
-    return {"machines": len(healthy), "records": len(logs)}
+    return {"machines": len(healthy)}
 
 
 def _logs_to_events(site_id: str, logs: list[Any]) -> list[dict[str, Any]]:
