@@ -107,7 +107,7 @@ def session_policy_for_connection(connection: Any) -> str:
                 "Effect": "Allow",
                 "Action": ["log:GetMachineGroup", "log:ListMachines"],
                 "Resource": [
-                    f"acs:log:{region}:{account_id}:project/{sls_project}/machinegroup/{collector_machine_group}"
+                    f"acs:log:*:{account_id}:project/{sls_project}/machinegroup/*"
                 ],
             }
         )
