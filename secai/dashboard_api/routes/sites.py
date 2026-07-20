@@ -210,7 +210,7 @@ def verify_alibaba_collector(
     request: Request,
     user_email: str = Depends(current_user_email),
 ) -> dict[str, Any]:
-    """Verify the provider heartbeat before enabling SLS polling."""
+    """Verify that the selected Logstore is queryable before enabling SLS polling."""
     ensure_site_owner(site_id, user_email)
     protect_judge_configuration(site_id, user_email)
     enforce_request_rate(request, f"alibaba-collector-verify:{site_id}", 30, 3600)
@@ -218,7 +218,7 @@ def verify_alibaba_collector(
     if not saved:
         raise HTTPException(status_code=400, detail="Start the Alibaba Cloud connection first.")
     try:
-        readiness = alibaba_sls.verify_collector_readiness(saved)
+        readiness = alibaba_sls.verify_logstore_readiness(saved)
         database.verify_alibaba_collector(site_id)
     except (ValueError, alibaba_sls.SlsReadinessError) as exc:
         message = str(exc)
@@ -226,8 +226,8 @@ def verify_alibaba_collector(
         raise HTTPException(status_code=400, detail=message) from exc
     except Exception as exc:
         message = (
-            "SecAi could not read the collector heartbeat. Confirm the collector ROS stack completed without any "
-            "failed resources, then try again. The backend log contains Alibaba's exact error and request ID."
+            "SecAi could not query the selected Logstore. Confirm the collector ROS stack completed and the "
+            "Logstore index is ready, then try again."
         )
         logger.warning("Alibaba collector verification failed for site %s", site_id, exc_info=exc)
         database.mark_alibaba_collector_error(site_id, message)

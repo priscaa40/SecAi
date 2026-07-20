@@ -100,17 +100,6 @@ def session_policy_for_connection(connection: Any) -> str:
                 "Resource": [f"acs:log:{region}:{account_id}:project/{sls_project}/logstore/{sls_logstore}"],
             }
         )
-    collector_machine_group = str(getattr(connection, "collector_machine_group", "") or "")
-    if account_id and sls_project and collector_machine_group:
-        statements.append(
-            {
-                "Effect": "Allow",
-                "Action": ["log:GetMachineGroup", "log:ListMachines"],
-                "Resource": [
-                    f"acs:log:*:{account_id}:project/{sls_project}/machinegroup/*"
-                ],
-            }
-        )
     security_group_id = str(getattr(connection, "security_group_id", "") or "")
     if account_id and security_group_id:
         statements.extend(

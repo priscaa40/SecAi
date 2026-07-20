@@ -161,7 +161,7 @@ export function AlibabaAutopilotSetup({
     void runOperation("collector", async (siteId) => {
       const result = await verifyAlibabaCollector(session, siteId);
       onStatus(result.status);
-      setMessage("Alibaba Cloud is connected. SecAi confirmed that the collector is running.");
+      setMessage("Alibaba Cloud is connected. SecAi confirmed that the selected Logstore is ready.");
       onLogsPulled();
     }, "SecAi could not verify the Alibaba collector yet.");
   }
@@ -334,8 +334,8 @@ export function AlibabaAutopilotSetup({
               <ol>
                 <li><strong>Download the collector template.</strong> It is locked to server <code>{status.collector_setup.instance_id}</code> and the selected Logstore.</li>
                 <li><strong>Create a new stack in Alibaba Cloud ROS.</strong> Choose &quot;Local Template&quot;, upload the file, review the command and resources, then approve the stack.</li>
-                <li><strong>Wait for the collector.</strong> After the ROS stack succeeds, allow up to two minutes for LoongCollector to report that it is running.</li>
-                <li><strong>Verify the connection.</strong> SecAi checks the collector heartbeat. You do not need to wait for an attack or website visit.</li>
+                <li><strong>Finish the ROS stack.</strong> Confirm every resource completed successfully.</li>
+                <li><strong>Verify the connection.</strong> SecAi checks that it can query the selected Logstore. No attack, website visit, or existing log record is required.</li>
               </ol>
               <div className="authorization-actions">
                 <button type="button" className="secondary-button" onClick={downloadCollectorTemplate} disabled={operationBusy}><Download size={15} /> {operation === "downloading" ? "Checking Logstore…" : "Download collector template"}</button>

@@ -8,7 +8,7 @@ from typing import Any
 from secai import database
 from secai.event_sources.normalizer import normalize_event
 from secai.event_sources.relevance import is_sls_candidate_relevant
-from secai.integrations import alibaba_autopilot, alibaba_coordinates, alibaba_credentials
+from secai.integrations import alibaba_coordinates, alibaba_credentials
 from secai.security.redaction import sanitize_sls_contents
 
 SUSPICIOUS_QUERY = "*"
@@ -140,8 +140,8 @@ def validate_log_source(connection: SlsConnection) -> None:
     )
 
 
-def verify_collector_readiness(config: dict[str, Any]) -> dict[str, Any]:
-    """Require a fresh heartbeat from the collector installed for this website."""
+def verify_logstore_readiness(config: dict[str, Any]) -> dict[str, Any]:
+    """Verify that SecAi can query the selected Logstore without requiring a record."""
     required = (
         "role_arn",
         "external_id",
@@ -150,10 +150,9 @@ def verify_collector_readiness(config: dict[str, Any]) -> dict[str, Any]:
         "sls_endpoint",
         "sls_project",
         "sls_logstore",
-        "collector_machine_group",
     )
     if config.get("connection_status") != "verified" or not all(config.get(key) for key in required):
-        raise SlsReadinessError("Save the website server and Log Service source before checking the collector.")
+        raise SlsReadinessError("Save the website server and Log Service source before finishing setup.")
     connection = SlsConnection(
         site_id=str(config["site_id"]),
         role_arn=str(config["role_arn"]),
@@ -164,53 +163,8 @@ def verify_collector_readiness(config: dict[str, Any]) -> dict[str, Any]:
         sls_project=str(config["sls_project"]),
         sls_logstore=str(config["sls_logstore"]),
     )
-    try:
-        client = _log_client(connection)
-        machines = list(
-            client.list_machines(
-                connection.sls_project,
-                str(config["collector_machine_group"]),
-                0,
-                100,
-            ).get_machines()
-        )
-    except Exception as exc:
-        error_code = str(getattr(exc, "get_error_code", lambda: "")() or "")
-        error_message = str(getattr(exc, "get_error_message", lambda: "")() or exc)
-        request_id = str(getattr(exc, "get_request_id", lambda: "")() or "")
-        normalized = f"{error_code} {error_message}".lower()
-        if any(
-            marker in normalized
-            for marker in ("accessdenied", "unauthorized", "forbidden", "not authorized", "permission")
-        ):
-            provider_context = ", ".join(
-                part for part in (error_code or "Access denied", f"request {request_id}" if request_id else "") if part
-            )
-            raise SlsReadinessError(
-                f"Alibaba rejected the collector heartbeat check ({provider_context}). Confirm the collector ROS "
-                "stack completed without failed resources and that the website role grants log:ListMachines for "
-                "the selected machine group."
-            ) from exc
-        if "machinegroupnotexist" in normalized or "machine group does not exist" in normalized:
-            raise SlsReadinessError(
-                "The collector machine group is missing. Confirm the collector ROS stack completed successfully, "
-                "then try again."
-            ) from exc
-        raise
-    expected_id = alibaba_autopilot.collector_resource_names(connection.site_id)["user_defined_id"]
-    now = int(datetime.now(UTC).timestamp())
-    healthy = [
-        machine
-        for machine in machines
-        if str(getattr(machine, "user_defined_id", "")) == expected_id
-        and now - int(getattr(machine, "heartbeat_time", 0) or 0) <= 10 * 60
-    ]
-    if not healthy:
-        raise SlsReadinessError(
-            "LoongCollector is not reporting from the selected server yet. Confirm the ROS stack finished "
-            "successfully, wait about two minutes, and try again."
-        )
-    return {"machines": len(healthy)}
+    validate_log_source(connection)
+    return {"logstore_queryable": True}
 
 
 def _logs_to_events(site_id: str, logs: list[Any]) -> list[dict[str, Any]]:

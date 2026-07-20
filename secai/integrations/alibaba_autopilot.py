@@ -193,8 +193,6 @@ def authorization_bundle(config: dict[str, Any]) -> dict[str, Any]:
                     "log:ListProject",
                     "log:ListLogStores",
                     "log:GetLogStoreLogs",
-                    "log:GetMachineGroup",
-                    "log:ListMachines",
                     "ecs:DescribeInstances",
                     "ecs:DescribeSecurityGroups",
                     "ecs:DescribeSecurityGroupAttribute",

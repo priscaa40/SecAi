@@ -162,7 +162,7 @@ def refresh_alibaba_collector_index_plan(site_id: str, *, create_index: bool) ->
 
 
 def verify_alibaba_collector(site_id: str) -> dict[str, Any]:
-    """Mark collection ready only after provider heartbeat and evidence checks pass."""
+    """Mark collection ready after the selected Logstore passes a query check."""
     now = utc_now()
     with connect() as conn:
         result = conn.execute(
