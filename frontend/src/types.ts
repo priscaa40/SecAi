@@ -14,7 +14,7 @@ export type Site = {
 };
 
 export type RecommendedAction = {
-  action: "monitor" | "notify_admin" | "block_ip";
+  action: "collect_follow_up_cloud_evidence" | "send_owner_alert" | "apply_temporary_ip_block";
   target?: string;
   reason?: string;
   report_sections: {
@@ -53,6 +53,28 @@ export type AgentTraceStep = {
   summary: string;
   tools?: string[];
   security_reference_ids?: string[];
+  latency_ms?: number | null;
+};
+
+export type ActionJob = {
+  id: number;
+  action: RecommendedAction["action"];
+  tool_name: string;
+  requires_approval: boolean;
+  status: "awaiting_approval" | "queued" | "running" | "succeeded" | "failed" | "rejected";
+  current_step?: string | null;
+  attempt_count: number;
+  result: {
+    tool?: string;
+    tool_invoked?: boolean;
+    tool_result?: Record<string, unknown>;
+    agent_trace?: AgentTraceStep[];
+    executor_report?: Record<string, unknown>;
+    [key: string]: unknown;
+  };
+  error?: string | null;
+  created_at: string;
+  updated_at: string;
 };
 
 export type IncidentEvidence = {
@@ -76,6 +98,20 @@ export type ProtectionPolicy = {
   action?: string | null;
 };
 
+export type ProtectionPresentation = {
+  state: string;
+  title: string;
+  description: string;
+  target?: string | null;
+  duration_seconds?: number | null;
+  duration_label?: string | null;
+  expires_at?: string | null;
+  human_action?: string | null;
+  can_retry: boolean;
+  can_unblock: boolean;
+  can_reapply: boolean;
+};
+
 export type Incident = {
   id: number;
   site_id: string;
@@ -89,10 +125,12 @@ export type Incident = {
   recommended_action: RecommendedAction;
   created_at: string;
   updated_at: string;
-  execution_status: "not_required" | "not_started" | "pending" | "applying" | "active" | "revoking" | "revoked" | "expired" | "failed";
+  execution_status: "awaiting_approval" | "queued" | "running" | "succeeded" | "rejected" | "not_started" | "pending" | "applying" | "active" | "revoking" | "revoked" | "expired" | "failed";
   active_policy: boolean;
   evidence?: IncidentEvidence[];
   policy?: ProtectionPolicy | null;
+  action_job?: ActionJob | null;
+  protection: ProtectionPresentation;
 };
 
 export type AnalysisJob = {

@@ -3,11 +3,12 @@ from __future__ import annotations
 from ipaddress import ip_address, ip_network
 from typing import Any
 
+from secai import database
 from secai.agent.profiles import candidate_profile_ids
 from secai.agent.schemas import IncidentResponse, InvestigationDecision, SecurityProfileContext
 from secai.integrations import alibaba_autopilot
 from secai.knowledge import mcp_client as security_knowledge_mcp
-from secai.models import REPORTING_ACTIONS
+from secai.models import NON_NETWORK_ACTIONS
 from secai.settings import get_settings
 
 
@@ -30,7 +31,7 @@ def validate_response_decision(
     capabilities = response_capabilities(event)
     if response.action not in capabilities["available_actions"]:
         raise ValueError(f"Action {response.action} is not available for this evidence source")
-    if response.action in REPORTING_ACTIONS:
+    if response.action in NON_NETWORK_ACTIONS:
         response.target = ""
         response.human_checkpoint = ""
         return
@@ -49,9 +50,12 @@ def _validate_owner_copy(response: IncidentResponse, event: dict[str, Any]) -> N
         *response.recommendation_steps,
     ]
     owner_copy = " ".join(owner_fields).lower()
-    if any(label in owner_copy for label in ("block_ip", "notify_admin")):
+    if any(
+        label in owner_copy
+        for label in ("collect_follow_up_cloud_evidence", "apply_temporary_ip_block", "send_owner_alert")
+    ):
         raise ValueError("Owner-facing report content cannot expose internal action names")
-    if response.action == "block_ip":
+    if response.action == "apply_temporary_ip_block":
         action_copy = response.recommended_action.lower()
         if "block" not in action_copy or "tempor" not in action_copy:
             raise ValueError("A block action must plainly describe temporary blocking in the recommended action")
@@ -71,12 +75,23 @@ def _validate_owner_copy(response: IncidentResponse, event: dict[str, Any]) -> N
 
 def response_capabilities(event: dict[str, Any]) -> dict[str, Any]:
     """Return the small action contract safe to include in the responder prompt."""
-    available_actions = ["monitor", "notify_admin"]
+    available_actions = ["send_owner_alert"]
+    config = database.get_alibaba_autopilot_config(event["site_id"])
+    has_live_cloud_evidence = event.get("source") == "alibaba_sls" or bool(
+        config
+        and config.get("connection_status") == "verified"
+        and config.get("collector_status") == "verified"
+        and config.get("sls_endpoint")
+        and config.get("sls_project")
+        and config.get("sls_logstore")
+    )
+    if has_live_cloud_evidence:
+        available_actions.insert(0, "collect_follow_up_cloud_evidence")
     verified_ip = verified_public_sls_ip(event)
     if verified_ip:
         provider_actions = set(alibaba_autopilot.available_actions_for_site(event["site_id"]))
-        if "block_ip" in provider_actions:
-            available_actions.append("block_ip")
+        if "apply_temporary_ip_block" in provider_actions:
+            available_actions.append("apply_temporary_ip_block")
     return {
         "available_actions": available_actions,
         "trusted_server_evidence": bool(verified_ip),
@@ -99,10 +114,10 @@ def verified_public_sls_ip(event: dict[str, Any]) -> str | None:
 
 
 def validate_remediation_target(action: str, target_value: str, event: dict | None = None) -> str:
-    """Validate the only active network action: blocking one observed public IP."""
-    if action in REPORTING_ACTIONS:
+    """Validate the currently supported network action against trusted evidence."""
+    if action in NON_NETWORK_ACTIONS:
         return ""
-    if action != "block_ip":
+    if action != "apply_temporary_ip_block":
         raise ValueError(f"Unsupported remediation action: {action}")
     target_value = (target_value or "").strip()
     if not target_value:
@@ -111,7 +126,7 @@ def validate_remediation_target(action: str, target_value: str, event: dict | No
         if "/" in target_value:
             target = ip_network(target_value, strict=False)
             if target.num_addresses != 1:
-                raise ValueError("block_ip must target one address")
+                raise ValueError("Temporary IP protection must target one address")
             address = target.network_address
         else:
             address = ip_address(target_value)
@@ -135,7 +150,7 @@ def validate_remediation_target(action: str, target_value: str, event: dict | No
             raise ValueError("IP blocking requires a public source IP from Alibaba SLS evidence")
         if address != ip_address(observed_ip):
             raise ValueError("The remediation target must equal the source IP observed in Alibaba SLS evidence")
-    return str(target)
+    return str(address)
 
 
 def _validated_profile(profile_id: str) -> dict[str, Any]:

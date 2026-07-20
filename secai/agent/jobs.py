@@ -5,6 +5,7 @@ import threading
 from typing import Any
 
 from secai import database
+from secai.agent import action_jobs
 from secai.agent.workflow import process_event
 from secai.integrations import discord
 
@@ -82,10 +83,11 @@ def _worker_loop() -> None:
             run_analysis_job(event, job["id"], send_notification=True)
         except Exception:
             logger.exception("Unexpected analysis worker failure for job %s", job["id"])
+            failed_job = database.get_analysis_job(job["id"])
             database.update_analysis_job(
                 job["id"],
                 status="failed",
-                current_step="failed",
+                current_step=_visible_failure_step(failed_job, "starting"),
                 error="The investigation could not finish. Try again from the dashboard.",
             )
         finally:
@@ -112,10 +114,17 @@ def run_analysis_job(
             completed_incident = database.get_incident(completed_job["incident_id"])
             return completed_incident, {"status": "incident_created", "notified": False}
         reason = safe_analysis_error(exc)
-        database.update_analysis_job(job_id, status="failed", current_step="failed", error=reason)
+        database.update_analysis_job(
+            job_id,
+            status="failed",
+            current_step=_visible_failure_step(completed_job, "investigator"),
+            error=reason,
+        )
         return None, {"status": "failed", "reason": reason}
     if incident:
-        notified = discord.notify_incident(incident) if send_notification else False
+        action_jobs.wake_action_worker()
+        selected_action = (incident.get("recommended_action") or {}).get("action")
+        notified = discord.notify_incident(incident) if send_notification and selected_action != "send_owner_alert" else False
         return database.get_incident(incident["id"]), {"status": "incident_created", "notified": notified}
     database.update_analysis_job(job_id, status="no_incident", current_step="complete")
     return None, {"status": "no_incident"}
@@ -128,6 +137,12 @@ def job_analysis(job: dict[str, Any]) -> dict[str, str | int | None]:
         "current_step": job.get("current_step"),
         "reason": job.get("error"),
     }
+
+
+def _visible_failure_step(job: dict[str, Any] | None, fallback: str) -> str:
+    """Keep the active agent visible instead of replacing it with a generic failure step."""
+    step = str((job or {}).get("current_step") or "")
+    return step if step in {"investigator", "reviewer", "responder", "persist_incident"} else fallback
 
 
 def is_qwen_moderation_error(exc: Exception) -> bool:

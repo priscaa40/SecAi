@@ -7,8 +7,10 @@ from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from secai import database
+from secai.actions import mcp_client as action_mcp
 from secai.actions.expiry import start_policy_expiry, stop_policy_expiry
 from secai.actions.retention import start_retention_worker, stop_retention_worker
+from secai.agent.action_jobs import start_action_worker, stop_action_worker
 from secai.agent.jobs import start_analysis_worker, stop_analysis_worker
 from secai.dashboard_api import auth_service
 from secai.dashboard_api.request_limits import RequestSizeLimitMiddleware
@@ -109,6 +111,7 @@ async def lifespan(_: FastAPI):
     database.reconcile_interrupted_actions()
     rate_limit.reset()
     start_analysis_worker()
+    start_action_worker()
     start_sls_polling()
     start_policy_expiry()
     start_retention_worker()
@@ -117,9 +120,12 @@ async def lifespan(_: FastAPI):
     expiry_stopped = stop_policy_expiry()
     sls_stopped = stop_sls_polling()
     analysis_stopped = stop_analysis_worker()
+    action_stopped = stop_action_worker()
     if analysis_stopped:
         security_knowledge_mcp.close()
-    if all((retention_stopped, expiry_stopped, sls_stopped, analysis_stopped)):
+    if action_stopped:
+        action_mcp.close()
+    if all((retention_stopped, expiry_stopped, sls_stopped, analysis_stopped, action_stopped)):
         database.close_database_pool()
 
 

@@ -3,6 +3,8 @@ from __future__ import annotations
 from typing import Any
 
 from secai import database
+from secai.actions.capabilities import requires_approval, tool_name_for_action
+from secai.actions.protection_presentation import TEMPORARY_BLOCK_DURATION_SECONDS, display_ip
 from secai.agent.schemas import IncidentResponse, InvestigationDecision, ReviewDecision, SecurityProfileContext
 from secai.agent.validation import response_capabilities
 
@@ -17,11 +19,11 @@ def persist_incident(
     analysis_job_id: int | None = None,
 ) -> dict[str, Any]:
     """Store one reviewed report with an approval-first action contract."""
-    requires_approval = response.action == "block_ip"
+    action_requires_approval = requires_approval(response.action)
     human_checkpoint = response.human_checkpoint
-    if requires_approval and not human_checkpoint:
+    if action_requires_approval and not human_checkpoint:
         human_checkpoint = "Confirm this source IP is not trusted before applying the temporary block."
-    if not requires_approval:
+    if not action_requires_approval:
         human_checkpoint = ""
 
     protection_status = _protection_status(response, event)
@@ -52,7 +54,7 @@ def persist_incident(
         "site_id": event["site_id"],
         "title": summary["title"],
         "severity": investigation.severity,
-        "status": "needs_review" if requires_approval else "reported",
+        "status": "needs_review" if action_requires_approval else "reported",
         "attack_type": security_profile["name"],
         "affected_route": investigation.affected_route or event.get("path"),
         "confidence": investigation.confidence,
@@ -60,8 +62,9 @@ def persist_incident(
         "recommended_action": {
             "action": response.action,
             "target": response.target,
+            "duration_seconds": TEMPORARY_BLOCK_DURATION_SECONDS if action_requires_approval else None,
             "reason": response.reason,
-            "requires_approval": requires_approval,
+            "requires_approval": action_requires_approval,
             "human_checkpoint": human_checkpoint,
             "security_profile_id": security_profile["id"],
             "security_reference_ids": sorted(set(security_profile["reference_ids"])),
@@ -88,19 +91,28 @@ def persist_incident(
             "agent_trace": agent_trace or [],
         },
     }
-    return database.insert_incident(incident, analysis_job_id=analysis_job_id)
+    return database.insert_incident(
+        incident,
+        analysis_job_id=analysis_job_id,
+        action_job={
+            "action": response.action,
+            "tool_name": tool_name_for_action(response.action),
+            "requires_approval": action_requires_approval,
+        },
+    )
 
 
 def _protection_status(response: IncidentResponse, event: dict[str, Any]) -> dict[str, str]:
     """Explain automation through the website's connected access, not internal action names."""
     capabilities = response_capabilities(event)
-    if response.action == "block_ip":
+    if response.action == "apply_temporary_ip_block":
+        target = display_ip(response.target)
         return {
             "state": "approval_required",
-            "title": "Temporary blocking is ready for approval",
+            "title": f"Block {target} for 1 hour?",
             "explanation": (
-                "Your cloud connection includes a verified public source address and authorized network controls. "
-                "Traffic will not change until the temporary block is approved."
+                "SecAi can temporarily stop requests from this address while you investigate. "
+                "Nothing changes until you approve."
             ),
         }
     if event.get("source") == "browser":
@@ -122,7 +134,7 @@ def _protection_status(response: IncidentResponse, event: dict[str, Any]) -> dic
                 "source address. The source of the activity cannot be blocked automatically without that address."
             ),
         }
-    if "block_ip" not in capabilities.get("available_actions", []):
+    if "apply_temporary_ip_block" not in capabilities.get("available_actions", []):
         return {
             "state": "not_authorized",
             "title": "Automatic blocking is not authorized",

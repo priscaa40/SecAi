@@ -9,18 +9,23 @@ import {
   listSites,
   rejectIncident,
   removeIncidentProtection,
+  reapplyIncidentProtection,
   retryAnalysisJob,
   retryIncidentProtection,
 } from "../api";
+import { ACTIVE_JOB_STATUSES } from "../components/incidentPresentation";
 import type { AnalysisJob, AutopilotStatus, Incident, Session, Site } from "../types";
 
 export const WORKSPACE_READY = "Your reports are up to date.";
 const DASHBOARD_POLL_INTERVAL_MS = 30_000;
+const ACTIVE_INVESTIGATION_POLL_INTERVAL_MS = 2_000;
 
 export function useWorkspace(session: Session | null) {
   const [sites, setSites] = useState<Site[]>([]);
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [analysisJobs, setAnalysisJobs] = useState<AnalysisJob[]>([]);
+  const hasActiveInvestigation = analysisJobs.some((job) => ACTIVE_JOB_STATUSES.has(job.status));
+  const hasActiveAction = incidents.some((incident) => ["queued", "running"].includes(incident.action_job?.status || ""));
   const [selectedIncidentId, setSelectedIncidentId] = useState<number | null>(null);
   const [selectedSiteId, setSelectedSiteId] = useState("");
   const [siteName, setSiteName] = useState("");
@@ -87,14 +92,17 @@ export function useWorkspace(session: Session | null) {
     const refreshWhenVisible = () => {
       if (document.visibilityState === "visible") refreshActivity();
     };
-    const timer = window.setInterval(refreshActivity, DASHBOARD_POLL_INTERVAL_MS);
+    const timer = window.setInterval(
+      refreshActivity,
+      hasActiveInvestigation || hasActiveAction ? ACTIVE_INVESTIGATION_POLL_INTERVAL_MS : DASHBOARD_POLL_INTERVAL_MS,
+    );
     document.addEventListener("visibilitychange", refreshWhenVisible);
     return () => {
       current = false;
       window.clearInterval(timer);
       document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
-  }, [session, selectedSiteId]);
+  }, [session, selectedSiteId, hasActiveInvestigation, hasActiveAction]);
 
   async function loadWorkspace(activeSession = session, preferredSiteId = selectedSiteId) {
     if (!activeSession) return;
@@ -200,11 +208,12 @@ export function useWorkspace(session: Session | null) {
     }
   }
 
-  async function handleProtection(action: "retry" | "remove", incidentId: number) {
+  async function handleProtection(action: "retry" | "remove" | "reapply", incidentId: number) {
     if (!session) return;
     setBusy(true);
     try {
       if (action === "retry") await retryIncidentProtection(session, incidentId);
+      else if (action === "reapply") await reapplyIncidentProtection(session, incidentId);
       else await removeIncidentProtection(session, incidentId);
       await loadWorkspace(session);
     } catch (error) {

@@ -10,8 +10,12 @@ from secai.database.connection import connect
 from secai.settings import get_settings
 
 
-def insert_incident(incident: dict[str, Any], analysis_job_id: int | None = None) -> dict[str, Any]:
-    """Store an incident, atomically completing its analysis job when one is supplied."""
+def insert_incident(
+    incident: dict[str, Any],
+    analysis_job_id: int | None = None,
+    action_job: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Atomically store an incident, its executable action, and analysis completion."""
     now = utc_now()
     status = incident.get("status", "needs_review")
     approval_token = secrets.token_urlsafe(32) if status == "needs_review" else None
@@ -39,6 +43,8 @@ def insert_incident(incident: dict[str, Any], analysis_job_id: int | None = None
                 raise ValueError("Analysis job must be running before it can create an incident")
 
         incident_id = _insert_incident_row(conn, incident, status, now)
+        if action_job:
+            _insert_action_job_row(conn, incident_id, incident["site_id"], action_job, now)
         if approval_token:
             _insert_approval_token(conn, incident_id, approval_token, now)
         if analysis_job_id is not None:
@@ -59,6 +65,36 @@ def insert_incident(incident: dict[str, Any], analysis_job_id: int | None = None
                 (incident_id, analysis_job_id),
             )
     return {**incident, "approval_token": approval_token, "id": incident_id, "created_at": now, "updated_at": now}
+
+
+def _insert_action_job_row(
+    conn: Any,
+    incident_id: int,
+    site_id: str,
+    action_job: dict[str, Any],
+    now: str,
+) -> None:
+    requires_approval = bool(action_job["requires_approval"])
+    conn.execute(
+        """
+        insert into action_jobs (
+            incident_id, site_id, action, tool_name, requires_approval,
+            approval_decision_id, status, current_step, attempt_count,
+            claimed_at, result_json, error, created_at, updated_at
+        ) values (?, ?, ?, ?, ?, null, ?, ?, 0, null, '{}', null, ?, ?)
+        """,
+        (
+            incident_id,
+            site_id,
+            action_job["action"],
+            action_job["tool_name"],
+            int(requires_approval),
+            "awaiting_approval" if requires_approval else "queued",
+            "human_approval" if requires_approval else "queued",
+            now,
+            now,
+        ),
+    )
 
 
 def _insert_incident_row(conn: Any, incident: dict[str, Any], status: str, now: str) -> int:

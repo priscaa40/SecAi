@@ -9,6 +9,7 @@ export const AGENT_LABELS: Record<string, { label: string; description: string }
   investigator: { label: "Investigator", description: "Finds related activity and identifies the likely threat." },
   reviewer: { label: "Reviewer", description: "Challenges the evidence and filters weak conclusions." },
   responder: { label: "Responder", description: "Explains the risk and recommends the safest response." },
+  executor: { label: "Executor", description: "Invokes the approved action through its guarded MCP tool." },
 };
 
 export const ACTIVE_JOB_STATUSES = new Set(["queued", "running"]);
@@ -24,6 +25,13 @@ export function statusLabel(status: string) {
 
 export function confidencePercent(confidence: number) {
   return Math.round(confidence <= 1 ? confidence * 100 : confidence);
+}
+
+export function formatDuration(milliseconds?: number | null) {
+  if (milliseconds === undefined || milliseconds === null) return null;
+  if (milliseconds < 1000) return `${milliseconds} ms`;
+  const seconds = milliseconds / 1000;
+  return `${seconds < 10 ? seconds.toFixed(1) : Math.round(seconds)} sec`;
 }
 
 export function formatDate(value?: string | null) {
@@ -65,6 +73,11 @@ export function protectionStatusLabel(status: string) {
     revoked: "Removed",
     expired: "Ended",
     failed: "Failed",
+    awaiting_approval: "Waiting for your approval",
+    queued: "Queued for Qwen Executor",
+    running: "Qwen Executor running",
+    succeeded: "Executed through MCP",
+    rejected: "Declined",
   };
   return labels[status] || friendlyText(status);
 }

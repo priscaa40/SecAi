@@ -10,6 +10,7 @@ from secai.database.migrations import (
     v006_to_v007,
     v007_to_v008,
     v008_to_v009,
+    v009_to_v010,
 )
 
 Migration = Callable[[Any], None]
@@ -21,6 +22,7 @@ MIGRATIONS: dict[int, Migration] = {
     6: v006_to_v007.apply,
     7: v007_to_v008.apply,
     8: v008_to_v009.apply,
+    9: v009_to_v010.apply,
 }
 
 

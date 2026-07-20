@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     qwen_investigator_model: str | None = None
     qwen_reviewer_model: str | None = None
     qwen_responder_model: str | None = None
+    qwen_executor_model: str | None = None
     qwen_enable_thinking: bool = False
     qwen_max_output_tokens: int = 900
     qwen_timeout_seconds: float = 45
@@ -34,6 +35,7 @@ class Settings(BaseSettings):
     secai_recent_event_limit: int = 20
     secai_model_context_chars: int = 24000
     secai_mcp_timeout_seconds: float = 10
+    secai_action_mcp_timeout_seconds: float = 60
     secai_session_ttl_hours: int = 24
     secai_approval_ttl_minutes: int = 30
     secai_data_retention_days: int = 30
@@ -102,5 +104,6 @@ def qwen_model_for_agent(agent_name: str, settings: Settings | None = None) -> s
         "investigator": settings.qwen_investigator_model,
         "reviewer": settings.qwen_reviewer_model,
         "responder": settings.qwen_responder_model,
+        "executor": settings.qwen_executor_model,
     }
     return models.get(agent_name) or settings.qwen_model

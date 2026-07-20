@@ -427,7 +427,7 @@ def available_actions_for_site(site_id: str) -> list[str]:
 
 def available_actions_for_mode(enforcement_mode: str) -> list[str]:
     """Return execution-capable actions for an enforcement mode."""
-    actions = ["monitor", "notify_admin"]
+    actions = ["collect_follow_up_cloud_evidence", "send_owner_alert"]
     if enforcement_mode == "security_group":
         actions.extend(sorted(SECURITY_GROUP_REMEDIATION_ACTIONS))
     return actions

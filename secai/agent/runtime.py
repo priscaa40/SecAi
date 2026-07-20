@@ -16,6 +16,8 @@ from secai.settings import get_settings, qwen_model_for_agent
 
 _current_event_id: ContextVar[int | None] = ContextVar("secai_current_event_id", default=None)
 _current_job_id: ContextVar[int | None] = ContextVar("secai_current_job_id", default=None)
+_current_action_job_id: ContextVar[int | None] = ContextVar("secai_current_action_job_id", default=None)
+_current_incident_id: ContextVar[int | None] = ContextVar("secai_current_incident_id", default=None)
 _agent_calls: ContextVar[list[dict[str, Any]] | None] = ContextVar("secai_agent_calls", default=None)
 _AGENT_CACHE: dict[tuple[str, type[BaseModel], str, tuple[str, ...]], Any] = {}
 
@@ -31,6 +33,24 @@ def analysis_run(event_id: int | None, job_id: int | None) -> Iterator[None]:
     finally:
         _current_event_id.reset(event_token)
         _current_job_id.reset(job_token)
+        _agent_calls.reset(calls_token)
+
+
+@contextmanager
+def action_run(incident_id: int, action_job_id: int) -> Iterator[None]:
+    """Scope usage and trace details to one Qwen action execution."""
+    incident_token = _current_event_id.set(None)
+    job_token = _current_job_id.set(None)
+    action_token = _current_action_job_id.set(action_job_id)
+    incident_id_token = _current_incident_id.set(incident_id)
+    calls_token = _agent_calls.set([])
+    try:
+        yield
+    finally:
+        _current_event_id.reset(incident_token)
+        _current_job_id.reset(job_token)
+        _current_action_job_id.reset(action_token)
+        _current_incident_id.reset(incident_id_token)
         _agent_calls.reset(calls_token)
 
 
@@ -107,6 +127,8 @@ def _record_agent_usage(
             "model": qwen_model_for_agent(name, settings),
             "event_id": _current_event_id.get(),
             "job_id": _current_job_id.get(),
+            "action_job_id": _current_action_job_id.get(),
+            "incident_id": _current_incident_id.get(),
             "input_tokens": usage.get("input_tokens"),
             "output_tokens": usage.get("output_tokens"),
             "total_tokens": usage.get("total_tokens"),

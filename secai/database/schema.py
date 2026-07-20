@@ -193,11 +193,34 @@ create table if not exists analysis_jobs (
     foreign key (incident_id) references incidents(id) on delete set null
 );
 
+create table if not exists action_jobs (
+    id integer primary key autoincrement,
+    incident_id integer not null unique,
+    site_id text not null,
+    action text not null,
+    tool_name text not null,
+    requires_approval integer not null,
+    approval_decision_id integer,
+    status text not null,
+    current_step text,
+    attempt_count integer not null default 0,
+    claimed_at text,
+    result_json text not null default '{}',
+    error text,
+    created_at text not null,
+    updated_at text not null,
+    foreign key (incident_id) references incidents(id) on delete cascade,
+    foreign key (site_id) references sites(site_id) on delete cascade,
+    foreign key (approval_decision_id) references approval_decisions(id) on delete restrict,
+    check (status in ('awaiting_approval', 'queued', 'running', 'succeeded', 'failed', 'rejected'))
+);
+
 create table if not exists qwen_usage (
     id integer primary key autoincrement,
     job_id integer,
     event_id integer,
     incident_id integer,
+    action_job_id integer,
     agent_name text not null,
     model text not null,
     input_tokens integer,
@@ -208,6 +231,7 @@ create table if not exists qwen_usage (
     error_message text,
     created_at text not null,
     foreign key (job_id) references analysis_jobs(id) on delete cascade,
+    foreign key (action_job_id) references action_jobs(id) on delete cascade,
     foreign key (event_id) references events(id) on delete cascade,
     foreign key (incident_id) references incidents(id) on delete set null
 );
@@ -266,6 +290,8 @@ def _create_indexes(conn: Any) -> None:
     conn.execute("create index if not exists idx_analysis_jobs_event_id on analysis_jobs(event_id)")
     conn.execute("create index if not exists idx_analysis_jobs_status_id on analysis_jobs(status, id)")
     conn.execute("create index if not exists idx_analysis_jobs_site_id on analysis_jobs(site_id, id desc)")
+    conn.execute("create index if not exists idx_action_jobs_status_id on action_jobs(status, id)")
+    conn.execute("create index if not exists idx_action_jobs_site_id on action_jobs(site_id, id desc)")
     conn.execute(
         "create unique index if not exists idx_analysis_jobs_incident_id "
         "on analysis_jobs(incident_id) where incident_id is not null"

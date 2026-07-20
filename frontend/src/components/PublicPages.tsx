@@ -55,6 +55,7 @@ export function PublicHome({ onStartSetup, onShowLogin }: { onStartSetup: () => 
             <li><span>1</span><strong>Investigator</strong><p>Finds related activity and identifies the likely threat.</p></li>
             <li><span>2</span><strong>Reviewer</strong><p>Challenges the evidence and filters weak conclusions.</p></li>
             <li><span>3</span><strong>Responder</strong><p>Explains the risk and recommends the safest response.</p></li>
+            <li><span>4</span><strong>Executor</strong><p>Invokes the selected action through a guarded MCP tool.</p></li>
           </ol>
         </section>
 
@@ -63,7 +64,7 @@ export function PublicHome({ onStartSetup, onShowLogin }: { onStartSetup: () => 
             <p className="eyebrow">Your approval</p>
             <h2>You approve what happens next.</h2>
           </div>
-          <p>SecAi can investigate, report, and keep watching without interrupting traffic. Any protective change waits for your approval, and the dashboard shows whether it was applied successfully.</p>
+          <p>SecAi can investigate, report, collect fresh evidence, and send alerts automatically. A network change waits for your approval; then Qwen Executor invokes the guarded MCP tool and the dashboard shows the verified result.</p>
         </section>
 
         <section className="quick-start simple-quick-start">

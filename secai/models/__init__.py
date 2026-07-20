@@ -6,14 +6,14 @@ IngestSource = Literal["browser", "alibaba_sls"]
 EvidenceSource = Literal["browser", "alibaba_autopilot"]
 Severity = Literal["low", "medium", "high", "critical"]
 RemediationAction = Literal[
-    "monitor",
-    "notify_admin",
-    "block_ip",
+    "collect_follow_up_cloud_evidence",
+    "send_owner_alert",
+    "apply_temporary_ip_block",
 ]
 AutopilotEnforcementMode = Literal["observe_only", "security_group"]
-REPORTING_ACTIONS = {"monitor", "notify_admin"}
+NON_NETWORK_ACTIONS = {"collect_follow_up_cloud_evidence", "send_owner_alert"}
 SECURITY_GROUP_REMEDIATION_ACTIONS = {
-    "block_ip",
+    "apply_temporary_ip_block",
 }
 
 
@@ -112,6 +112,38 @@ class ProtectionPolicyOut(BaseModel):
     action: str | None = None
 
 
+class ProtectionPresentationOut(BaseModel):
+    """Live, owner-facing explanation and controls for temporary protection."""
+
+    state: str
+    title: str
+    description: str
+    target: str | None = None
+    duration_seconds: int | None = None
+    duration_label: str | None = None
+    expires_at: str | None = None
+    human_action: str | None = None
+    can_retry: bool = False
+    can_unblock: bool = False
+    can_reapply: bool = False
+
+
+class ActionJobOut(BaseModel):
+    """Durable status and audit result for one Qwen Executor action."""
+
+    id: int
+    action: str
+    tool_name: str
+    requires_approval: bool
+    status: str
+    current_step: str | None = None
+    attempt_count: int
+    result: dict[str, Any] = Field(default_factory=dict)
+    error: str | None = None
+    created_at: str
+    updated_at: str
+
+
 class IncidentOut(BaseModel):
     """Incident response returned by the API and dashboard."""
 
@@ -131,6 +163,8 @@ class IncidentOut(BaseModel):
     active_policy: bool = False
     evidence: list[IncidentEvidenceOut] = Field(default_factory=list)
     policy: ProtectionPolicyOut | None = None
+    action_job: ActionJobOut | None = None
+    protection: ProtectionPresentationOut
 
 
 class ApprovalIn(ApiInput):

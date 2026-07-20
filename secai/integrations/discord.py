@@ -12,6 +12,7 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from secai import database
+from secai.actions.protection_presentation import protection_presentation
 from secai.settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -26,6 +27,52 @@ def notify_incident(incident: dict) -> bool:
         if channel["channel"] == "discord" and config.get("channel_id") and bot_token:
             sent = _notify_discord_bot(incident, config["channel_id"], bot_token) or sent
     return sent
+
+
+def notify_decision_result(
+    incident: dict,
+    decision: str,
+    *,
+    result: dict | None = None,
+    error: str | None = None,
+) -> bool:
+    """Tell the connected Discord channel whether its decision took effect."""
+    stored_incident = (result or {}).get("incident") or database.get_incident(incident["id"]) or incident
+    policy = (result or {}).get("policy")
+    if policy is None:
+        policy = database.get_policy_for_incident(incident["id"])
+    presentation = protection_presentation(stored_incident, policy)
+    target = presentation.get("target") or "the source address"
+    duration = presentation.get("duration_label") or "1 hour"
+
+    if error:
+        content = f"❌ SecAi could not save your decision for {target}. {error}"
+    elif decision == "reject":
+        content = f"✅ You chose not to block {target}. No traffic was changed."
+    elif policy and policy.get("status") == "active":
+        content = f"✅ {target} was blocked for {duration}. Alibaba Cloud confirmed the block."
+    elif policy and policy.get("status") == "failed":
+        content = f"⚠️ You approved blocking {target}, but Alibaba Cloud did not apply it. Open the report to retry."
+    else:
+        content = f"⚠️ Your approval was saved, but the block for {target} is not active yet. Open the report for details."
+
+    payload = {
+        "content": content,
+        "components": [
+            {
+                "type": 1,
+                "components": [
+                    {
+                        "type": 2,
+                        "style": 5,
+                        "label": "Open report",
+                        "url": f"{get_settings().frontend_base_url}/?incident={incident['id']}",
+                    }
+                ],
+            }
+        ],
+    }
+    return _notify_site_discord(incident["site_id"], payload)
 
 
 def setup_code_hash(code: str) -> str:
@@ -210,7 +257,7 @@ def _message(incident: dict) -> str:
     response_plan = incident.get("recommended_action", {})
     report_sections = response_plan.get("report_sections") or {}
     summary = report_sections.get("owner_summary") or {}
-    protection = response_plan.get("protection_status") or {}
+    protection = protection_presentation(incident, database.get_policy_for_incident(incident["id"]))
     closing = (
         "Review the temporary protection below. No traffic will change until it is approved."
         if incident.get("status") == "needs_review" and incident.get("approval_token")
@@ -223,7 +270,7 @@ def _message(incident: dict) -> str:
         f"{summary.get('evidence', '')}\n"
         f"Recommended action: {summary.get('recommended_action', 'Open the report and review the evidence.')}\n\n"
         f"Protection status\n{protection.get('title', 'Open the report for the current status')}\n"
-        f"{protection.get('explanation', '')}\n\n"
+        f"{protection.get('description', '')}\n\n"
         f"{closing}"
     )
     return content[:1900]
@@ -235,8 +282,8 @@ def _discord_payload(incident: dict) -> dict:
     buttons = [{"type": 2, "style": 5, "label": "Open report", "url": urls["review"]}]
     if incident.get("status") == "needs_review" and incident.get("approval_token"):
         buttons = [
-            {"type": 2, "style": 5, "label": "Approve", "url": urls["approve"]},
-            {"type": 2, "style": 5, "label": "Reject", "url": urls["reject"]},
+            {"type": 2, "style": 5, "label": "Block for 1 hour", "url": urls["approve"]},
+            {"type": 2, "style": 5, "label": "Don't block", "url": urls["reject"]},
             *buttons,
         ]
     components = [{"type": 1, "components": buttons}]
@@ -245,10 +292,27 @@ def _discord_payload(incident: dict) -> dict:
 
 def _notify_discord_bot(incident: dict, channel_id: str, bot_token: str) -> bool:
     """Send an incident alert to Discord through SecAi's bot."""
+    return _post_discord_payload(channel_id, bot_token, _discord_payload(incident))
+
+
+def _notify_site_discord(site_id: str, payload: dict) -> bool:
+    sent = False
+    bot_token = get_settings().discord_bot_token
+    if not bot_token:
+        return False
+    for channel in database.list_report_channels(site_id):
+        config = channel["config"]
+        if channel["channel"] == "discord" and config.get("channel_id"):
+            sent = _post_discord_payload(config["channel_id"], bot_token, payload) or sent
+    return sent
+
+
+def _post_discord_payload(channel_id: str, bot_token: str, payload: dict) -> bool:
+    """Post one bot message without allowing Discord failures to affect protection."""
     try:
         response = httpx.post(
             f"https://discord.com/api/v10/channels/{channel_id}/messages",
-            json=_discord_payload(incident),
+            json=payload,
             headers={"Authorization": f"Bot {bot_token}"},
             timeout=10,
         )

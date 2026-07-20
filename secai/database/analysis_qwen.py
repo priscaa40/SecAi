@@ -198,14 +198,15 @@ def insert_qwen_usage(usage: dict[str, Any]) -> dict[str, Any]:
         cursor = conn.execute(
             """
             insert into qwen_usage (
-                job_id, event_id, incident_id, agent_name, model, input_tokens,
+                job_id, event_id, incident_id, action_job_id, agent_name, model, input_tokens,
                 output_tokens, total_tokens, model_calls, latency_ms, error_message, created_at
-            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) returning id
+            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) returning id
             """,
             (
                 usage.get("job_id"),
                 usage.get("event_id"),
                 usage.get("incident_id"),
+                usage.get("action_job_id"),
                 usage["agent_name"],
                 usage["model"],
                 usage.get("input_tokens"),
@@ -233,7 +234,8 @@ def list_qwen_usage_for_sites(site_ids: list[str], limit: int = 100) -> list[dic
             from qwen_usage
             left join analysis_jobs on analysis_jobs.id = qwen_usage.job_id
             left join events on events.id = qwen_usage.event_id
-            where coalesce(analysis_jobs.site_id, events.site_id) in ({placeholders})
+            left join action_jobs on action_jobs.id = qwen_usage.action_job_id
+            where coalesce(analysis_jobs.site_id, events.site_id, action_jobs.site_id) in ({placeholders})
             order by qwen_usage.id desc
             limit ?
             """,
@@ -265,7 +267,8 @@ def summarize_qwen_usage_for_sites(site_ids: list[str]) -> dict[str, Any]:
             from qwen_usage
             left join analysis_jobs on analysis_jobs.id = qwen_usage.job_id
             left join events on events.id = qwen_usage.event_id
-            where coalesce(analysis_jobs.site_id, events.site_id) in ({placeholders})
+            left join action_jobs on action_jobs.id = qwen_usage.action_job_id
+            where coalesce(analysis_jobs.site_id, events.site_id, action_jobs.site_id) in ({placeholders})
             """,
             tuple(site_ids),
         ).fetchone()

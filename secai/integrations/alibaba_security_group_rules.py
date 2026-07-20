@@ -74,7 +74,7 @@ def normalize_source_cidr(action: str, target: str) -> str:
             network = ip_network(f"{address}/{32 if address.version == 4 else 128}", strict=False)
     except ValueError as exc:
         raise ValueError(f"Invalid source IP or CIDR for {action}: {target}") from exc
-    if action != "block_ip" or network.num_addresses != 1:
+    if action != "apply_temporary_ip_block" or network.num_addresses != 1:
         raise ValueError("SecAi protection requires one source IP address.")
     if not network.network_address.is_global or not network.broadcast_address.is_global:
         raise ValueError("Security group remediation cannot target a non-global network.")

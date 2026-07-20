@@ -12,6 +12,7 @@ import {
 import {
   AGENT_LABELS,
   confidencePercent,
+  formatDuration,
   formatDate,
   friendlyText,
   protectionStatusLabel,
@@ -29,7 +30,7 @@ export function IncidentReport({
   status: string;
   busy: boolean;
   onDecision: (action: "approve" | "reject", incidentId: number) => void;
-  onProtection?: (action: "retry" | "remove", incidentId: number) => void;
+  onProtection?: (action: "retry" | "remove" | "reapply", incidentId: number) => void;
 }) {
   if (!incident) {
     return (
@@ -47,13 +48,14 @@ export function IncidentReport({
   const reportSections = action.report_sections;
   const ownerSummary = reportSections.owner_summary;
   const ownerRecommendation = action.owner_recommendation;
-  const protectionStatus = action.protection_status;
-  const rawTrace: AgentTraceStep[] = Array.isArray(action.agent_trace) ? action.agent_trace : [];
-  const agentTrace = ["investigator", "reviewer", "responder"]
+  const protectionStatus = incident.protection;
+  const actionTrace: AgentTraceStep[] = Array.isArray(incident.action_job?.result.agent_trace) ? incident.action_job.result.agent_trace : [];
+  const rawTrace: AgentTraceStep[] = [...(Array.isArray(action.agent_trace) ? action.agent_trace : []), ...actionTrace];
+  const agentTrace = ["investigator", "reviewer", "responder", "executor"]
     .map((role) => rawTrace.find((step) => step.agent === role))
     .filter((step): step is AgentTraceStep => Boolean(step));
   const evidence = buildEvidence(incident, action);
-  const requiresDecision = incident.status === "needs_review" && action.action === "block_ip";
+  const requiresDecision = incident.status === "needs_review" && action.action === "apply_temporary_ip_block";
   const providerRuleId = getProviderRuleId(incident);
 
   return (
@@ -79,10 +81,15 @@ export function IncidentReport({
             <ShieldCheck size={19} />
             <div><p className="eyebrow">Protection status</p><h2>{protectionStatus.title}</h2></div>
           </div>
-          <p>{protectionStatus.explanation}</p>
-          {action.target ? <small className="protection-target">Source address: {String(action.target)}</small> : null}
+          <p>{protectionStatus.description}</p>
+          {protectionStatus.target ? (
+            <div className="protection-facts">
+              <span><small>Address</small><strong>{protectionStatus.target}</strong></span>
+              {protectionStatus.duration_label ? <span><small>Duration</small><strong>{protectionStatus.duration_label}</strong></span> : null}
+            </div>
+          ) : null}
 
-          {action.action === "block_ip" ? (
+          {action.action === "apply_temporary_ip_block" ? (
             <>
               <HumanDecision incident={incident} action={action} busy={busy} onDecision={onDecision} />
               <ProtectionOutcome
@@ -91,8 +98,20 @@ export function IncidentReport({
                 busy={busy}
                 onRetry={() => onProtection("retry", incident.id)}
                 onRemove={() => onProtection("remove", incident.id)}
+                onReapply={() => onProtection("reapply", incident.id)}
               />
             </>
+          ) : null}
+
+          {action.action !== "apply_temporary_ip_block" && incident.action_job ? (
+            <div className="human-decision" role="status" aria-live="polite">
+              <small>Autopilot action via MCP</small>
+              <strong>{friendlyText(incident.action_job.status)}</strong>
+              {incident.action_job.error ? <p className="execution-error">{incident.action_job.error}</p> : null}
+              {incident.action_job.status === "failed" ? (
+                <button type="button" onClick={() => onProtection("retry", incident.id)} disabled={busy}>Retry autopilot action</button>
+              ) : null}
+            </div>
           ) : null}
 
           {incident.status === "needs_review" && !requiresDecision ? (
@@ -134,11 +153,12 @@ export function IncidentReport({
           <div className="agent-trace">
             {agentTrace.length ? agentTrace.map((step, index) => {
               const role = AGENT_LABELS[step.agent];
+              const duration = formatDuration(step.latency_ms);
               return (
                 <article className="agent-trace-step" key={step.agent}>
                   <span className="trace-number">{index + 1}</span>
                   <div>
-                    <div className="trace-heading"><strong>{role.label}</strong></div>
+                    <div className="trace-heading"><strong>{role.label}</strong>{duration ? <span>Completed in {duration}</span> : null}</div>
                     <small className="trace-role-description">{role.description}</small>
                     <p>{step.summary}</p>
                     {step.decision ? <small>Result: {friendlyText(step.decision)}</small> : null}

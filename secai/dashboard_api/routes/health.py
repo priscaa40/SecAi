@@ -3,7 +3,8 @@ from __future__ import annotations
 from fastapi import APIRouter, Response
 
 from secai import database
-from secai.agent import jobs
+from secai.actions import mcp_client as action_mcp_client
+from secai.agent import action_jobs, jobs
 from secai.knowledge import mcp_client
 from secai.settings import get_settings
 
@@ -28,6 +29,7 @@ def health(response: Response) -> dict:
         "service": "secai-autopilot",
         "checks": checks,
         "analysis_worker": worker,
+        "action_worker": action_jobs.worker_metrics(),
     }
 
 
@@ -37,7 +39,8 @@ def readiness(response: Response) -> dict:
     checks: dict[str, bool] = {
         "database": False,
         "qwen_configured": bool(get_settings().dashscope_api_key),
-        "mcp": False,
+        "knowledge_mcp": False,
+        "action_mcp": False,
     }
     try:
         with database.connect() as conn:
@@ -45,10 +48,20 @@ def readiness(response: Response) -> dict:
     except Exception:
         pass
     try:
-        checks["mcp"] = bool(mcp_client.list_tools())
+        checks["knowledge_mcp"] = bool(mcp_client.list_tools())
     except Exception:
-        checks["mcp"] = False
+        checks["knowledge_mcp"] = False
+    try:
+        discovered = {tool["name"] for tool in action_mcp_client.list_tools()}
+        checks["action_mcp"] = {
+            "send_owner_security_alert",
+            "collect_follow_up_cloud_evidence",
+            "apply_temporary_ip_block",
+        }.issubset(discovered)
+    except Exception:
+        checks["action_mcp"] = False
     checks["analysis_worker"] = bool(jobs.worker_metrics()["running"])
+    checks["action_worker"] = bool(action_jobs.worker_metrics()["running"])
     ready = all(checks.values())
     if not ready:
         response.status_code = 503

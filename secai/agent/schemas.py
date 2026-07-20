@@ -76,6 +76,14 @@ class IncidentResponse(AgentOutput):
         )
 
 
+class ActionExecutionReport(AgentOutput):
+    """Qwen Executor's compact account of the MCP action it invoked."""
+
+    outcome: Literal["executed"]
+    tool_name: str
+    summary: str = Field(min_length=8, max_length=400)
+
+
 class SecurityProfileContext(TypedDict):
     """Application-owned profile data attached after Qwen selects a valid ID."""
 

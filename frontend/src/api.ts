@@ -221,6 +221,15 @@ export function removeIncidentProtection(session: Session, incidentId: number) {
   );
 }
 
+export function reapplyIncidentProtection(session: Session, incidentId: number) {
+  return apiRequest(
+    session.apiBase,
+    `/api/incidents/${incidentId}/reapply-protection`,
+    { method: "POST" },
+    session.token,
+  );
+}
+
 export function pullAlibabaSlsLogs(session: Session, siteId: string, query: string, minutes: number, limit: number) {
   return apiRequest<AlibabaSlsPullResult>(
     session.apiBase,

@@ -18,6 +18,7 @@ import { createDiscordSetup } from "../api";
 import type { AnalysisJob, AutopilotStatus, DiscordSetup, Incident, Session, Site } from "../types";
 import { AlibabaAutopilotSetup } from "./AlibabaPanels";
 import { IncidentQueue, IncidentReport } from "./IncidentPanels";
+import { InvestigationProgress } from "./InvestigationProgress";
 import { Brand } from "./PublicPages";
 
 type DashboardView = "overview" | "incidents" | "protection";
@@ -34,7 +35,7 @@ export function Dashboard({
   onAutopilotStatus: (status: AutopilotStatus | null) => void; onSlsPulled: () => void;
   onSelectIncident: (incidentId: number) => void;
   onDecision: (action: "approve" | "reject", incidentId: number) => void;
-  onProtection: (action: "retry" | "remove", incidentId: number) => void;
+  onProtection: (action: "retry" | "remove" | "reapply", incidentId: number) => void;
   onRetryAnalysisJob: (jobId: number) => void;
 }) {
   const [activeView, setActiveView] = useState<DashboardView>("overview");
@@ -97,7 +98,7 @@ export function Dashboard({
         {status !== "Your reports are up to date." && !busy ? <div className="workspace-message" role="status" aria-live="polite">{status}</div> : null}
 
         {activeView === "overview" ? (
-          <OverviewPage session={session} site={selectedSite} incidents={incidents} analysisJobs={analysisJobs} autopilotStatus={autopilotStatus} busy={busy} onAutopilotStatus={onAutopilotStatus} onSlsPulled={onSlsPulled} onOpenIncidents={() => setActiveView("incidents")} onOpenProtection={() => setActiveView("protection")} onOpenIncident={openIncident} />
+          <OverviewPage session={session} site={selectedSite} incidents={incidents} analysisJobs={analysisJobs} autopilotStatus={autopilotStatus} busy={busy} onAutopilotStatus={onAutopilotStatus} onSlsPulled={onSlsPulled} onOpenIncidents={() => setActiveView("incidents")} onOpenProtection={() => setActiveView("protection")} onOpenIncident={openIncident} onRetryInvestigation={onRetryAnalysisJob} />
         ) : null}
 
         {activeView === "incidents" ? (
@@ -131,10 +132,11 @@ export function Dashboard({
   );
 }
 
-function OverviewPage({ session, site, incidents, analysisJobs, autopilotStatus, busy, onAutopilotStatus, onSlsPulled, onOpenIncidents, onOpenProtection, onOpenIncident }: {
+function OverviewPage({ session, site, incidents, analysisJobs, autopilotStatus, busy, onAutopilotStatus, onSlsPulled, onOpenIncidents, onOpenProtection, onOpenIncident, onRetryInvestigation }: {
   session: Session; site: Site | null; incidents: Incident[]; analysisJobs: AnalysisJob[]; autopilotStatus: AutopilotStatus | null; busy: boolean;
   onAutopilotStatus: (status: AutopilotStatus | null) => void; onSlsPulled: () => void;
   onOpenIncidents: () => void; onOpenProtection: () => void; onOpenIncident: (id: number) => void;
+  onRetryInvestigation: (jobId: number) => void;
 }) {
   const cloudConnected = Boolean(autopilotStatus?.logs_connected);
   const usesAlibaba = site?.evidence_source === "alibaba_autopilot";
@@ -144,6 +146,7 @@ function OverviewPage({ session, site, incidents, analysisJobs, autopilotStatus,
   const attention = incidents.filter((incident) => incident.status === "needs_review");
   const activeInvestigations = analysisJobs.filter((job) => ["queued", "running"].includes(job.status));
   const failedInvestigations = analysisJobs.filter((job) => job.status === "failed");
+  const visibleInvestigations = [...activeInvestigations, ...failedInvestigations].slice(0, 3);
   const overviewTitle = attention.length
     ? `${attention.length} ${attention.length === 1 ? "report needs" : "reports need"} a decision`
     : failedInvestigations.length
@@ -174,6 +177,15 @@ function OverviewPage({ session, site, incidents, analysisJobs, autopilotStatus,
         <span><strong>{activeInvestigations.length}</strong><small>Being investigated</small></span>
         <span><strong>{usesAlibaba ? "Alibaba Cloud" : "Website script"}</strong><small>Evidence source</small></span>
       </section>
+
+      {visibleInvestigations.length ? (
+        <section className="overview-section live-investigations">
+          <div className="card-header"><div><p className="eyebrow">SecAi agents</p><h2>Live investigations</h2></div><button type="button" className="link-button" onClick={onOpenIncidents}>View activity <ArrowRight size={15} /></button></div>
+          <div className="overview-investigation-list">
+            {visibleInvestigations.map((job) => <InvestigationProgress job={job} busy={busy} onRetry={onRetryInvestigation} key={job.id} />)}
+          </div>
+        </section>
+      ) : null}
 
       <div className="overview-columns">
         <section className="overview-section recent-card">

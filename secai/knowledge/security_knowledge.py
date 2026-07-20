@@ -2,18 +2,23 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 from collections.abc import Callable
 from typing import Any
 from urllib.error import URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
+from mcp.server.fastmcp import FastMCP
+
 from secai.knowledge.security_knowledge_data import (
-    MCP_TOOLS,
     OFFICIAL_SOURCE_URLS,
     SECURITY_PROFILES,
-    SERVER_INFO,
+)
+
+mcp = FastMCP(
+    "SecAi Security Knowledge",
+    instructions="Read-only, source-backed security knowledge for the SecAi Qwen investigator.",
+    json_response=True,
 )
 
 
@@ -149,45 +154,47 @@ def call_tool(name: str | None, arguments: dict[str, Any] | None = None) -> Any:
     return handlers[name](args)
 
 
+@mcp.tool(name="list_security_profiles")
+def mcp_list_security_profiles() -> list[dict[str, Any]]:
+    """List source-backed security profiles available to the investigator."""
+    return list_entries()
+
+
+@mcp.tool(name="lookup_security_profile")
+def mcp_lookup_security_profile(entry_id: str) -> dict[str, Any]:
+    """Return one security profile with official source references."""
+    return get_entry(entry_id) or {"error": "unknown security profile"}
+
+
+@mcp.tool(name="find_matching_security_profiles")
+def mcp_find_matching_security_profiles(event: dict[str, Any], limit: int = 5) -> list[dict[str, Any]]:
+    """Find security profiles that match normalized, untrusted event evidence."""
+    return find_matching_entries(event, limit=max(1, min(limit, 10)))
+
+
+@mcp.tool(name="search_nvd_vulnerabilities")
+def mcp_search_nvd_vulnerabilities(
+    keyword: str | None = None,
+    cwe_id: str | None = None,
+    limit: int = 5,
+) -> dict[str, Any]:
+    """Search the official NVD API for vulnerability context."""
+    return search_nvd(keyword=keyword, cwe_id=cwe_id, limit=limit)
+
+
+@mcp.tool(name="query_osv_package_vulnerabilities")
+def mcp_query_osv_package_vulnerabilities(
+    ecosystem: str,
+    package: str,
+    version: str | None = None,
+) -> dict[str, Any]:
+    """Query the official OSV API for package vulnerability context."""
+    return query_osv(ecosystem=ecosystem, package=package, version=version)
+
+
 def main() -> None:
-    """Run the SecAi security knowledge MCP server over stdio."""
-    for line in sys.stdin:
-        if not line.strip():
-            continue
-        response = handle_message(json.loads(line))
-        if response is not None:
-            sys.stdout.write(json.dumps(response) + "\n")
-            sys.stdout.flush()
-
-
-def handle_message(message: dict[str, Any]) -> dict[str, Any] | None:
-    """Handle one JSON-RPC MCP message."""
-    method = message.get("method")
-    request_id = message.get("id")
-    try:
-        if method == "initialize":
-            return _result(
-                request_id,
-                {
-                    "protocolVersion": "2024-11-05",
-                    "capabilities": {"tools": {}},
-                    "serverInfo": SERVER_INFO,
-                },
-            )
-        if method == "notifications/initialized":
-            return None
-        if method == "tools/list":
-            return _result(request_id, {"tools": [_tool_descriptor(name, spec) for name, spec in MCP_TOOLS.items()]})
-        if method == "tools/call":
-            params = message.get("params") or {}
-            payload = call_tool(params.get("name"), params.get("arguments") or {})
-            return _result(
-                request_id,
-                {"content": [{"type": "text", "text": json.dumps(payload, default=str)}], "isError": False},
-            )
-        return _error(request_id, -32601, f"Unknown method: {method}")
-    except Exception as exc:
-        return _error(request_id, -32000, str(exc))
+    """Run the official SecAi security knowledge MCP server over stdio."""
+    mcp.run(transport="stdio")
 
 
 def _public_entry(entry: dict[str, Any] | None) -> dict[str, Any]:
@@ -249,21 +256,6 @@ def _post_json(url: str, payload: dict[str, Any]) -> dict[str, Any]:
             return json.loads(response.read().decode("utf-8"))
     except (OSError, URLError, TimeoutError, json.JSONDecodeError) as exc:
         return {"error": str(exc), "url": url}
-
-
-def _tool_descriptor(name: str, spec: dict[str, Any]) -> dict[str, Any]:
-    """Return one MCP tool descriptor."""
-    return {"name": name, "description": spec["description"], "inputSchema": spec["inputSchema"]}
-
-
-def _result(request_id: Any, result: dict[str, Any]) -> dict[str, Any]:
-    """Return a JSON-RPC result message."""
-    return {"jsonrpc": "2.0", "id": request_id, "result": result}
-
-
-def _error(request_id: Any, code: int, message: str) -> dict[str, Any]:
-    """Return a JSON-RPC error message."""
-    return {"jsonrpc": "2.0", "id": request_id, "error": {"code": code, "message": message}}
 
 
 def _keywords(text: str) -> set[str]:

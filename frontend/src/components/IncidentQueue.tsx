@@ -1,4 +1,4 @@
-import { AlertTriangle, CheckCircle2, CircleCheckBig, Clock3, RefreshCw } from "lucide-react";
+import { CheckCircle2, CircleCheckBig, Clock3 } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import type { AnalysisJob, Incident } from "../types";
@@ -7,9 +7,9 @@ import {
   FAILED_JOB_STATUSES,
   formatDate,
   friendlyText,
-  jobLabel,
   statusLabel,
 } from "./incidentPresentation";
+import { InvestigationProgress } from "./InvestigationProgress";
 
 type IncidentFilter = "attention" | "all" | "handled";
 
@@ -32,7 +32,7 @@ export function IncidentQueue({
   const attentionCount = incidents.filter((incident) => incident.status === "needs_review").length;
   const visibleJobs = analysisJobs
     .filter((job) => ACTIVE_JOB_STATUSES.has(job.status) || FAILED_JOB_STATUSES.has(job.status))
-    .slice(0, 5);
+    .slice(0, 3);
   const visibleIncidents = useMemo(() => {
     if (filter === "attention") return incidents.filter((incident) => incident.status === "needs_review");
     if (filter === "handled") return incidents.filter((incident) => incident.status !== "needs_review");
@@ -48,20 +48,7 @@ export function IncidentQueue({
       {visibleJobs.length ? (
         <div className="analysis-job-list" aria-label="Current investigations" aria-live="polite">
           {visibleJobs.map((job) => {
-            const evidence = job.event || job.evidence?.[0];
-            const failed = FAILED_JOB_STATUSES.has(job.status);
-            const canRetry = failed && job.attempt_count < 3;
-            return (
-              <div className={`analysis-job job-${failed ? "failed" : "active"}`} key={job.id}>
-                {failed ? <AlertTriangle size={17} /> : <RefreshCw size={17} className={job.status === "running" ? "spin" : ""} />}
-                <span>
-                  <strong>{jobLabel(job.status)}</strong>
-                  <small>{job.error || job.current_step || [evidence?.method, evidence?.path].filter(Boolean).join(" ") || `Received ${formatDate(job.created_at)}`}</small>
-                </span>
-                {canRetry ? <button type="button" onClick={() => onRetry(job.id)} disabled={busy}>Retry</button> : null}
-                {failed && !canRetry ? <small>Retry limit reached</small> : null}
-              </div>
-            );
+            return <InvestigationProgress job={job} compact busy={busy} onRetry={onRetry} key={job.id} />;
           })}
         </div>
       ) : null}

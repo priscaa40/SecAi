@@ -49,13 +49,13 @@ def incident_decisions(incident_id: int, user_email: str = Depends(current_user_
     return {"incident_id": incident_id, "decisions": database.list_approval_decisions(incident_id)}
 
 
-@router.post("/{incident_id}/approve")
+@router.post("/{incident_id}/approve", status_code=202)
 def approve_incident(
     incident_id: int,
     payload: ApprovalIn,
     user_email: str = Depends(current_user_email),
 ) -> dict[str, Any]:
-    """Approve an owned incident's recommended remediation and create a policy."""
+    """Approve an owned action and queue it for Qwen Executor."""
     _owned_incident(incident_id, user_email)
     return incident_service.approve_incident(incident_id, payload, user_email)
 
@@ -73,7 +73,7 @@ def reject_incident(
 
 @router.post("/{incident_id}/retry")
 def retry_incident_action(incident_id: int, user_email: str = Depends(current_user_email)) -> dict[str, Any]:
-    """Retry provider execution for an approved action that failed or was interrupted."""
+    """Retry a failed Qwen Executor action without replacing owner approval."""
     _owned_incident(incident_id, user_email)
     return incident_service.retry_incident_action(incident_id, user_email)
 
@@ -83,3 +83,10 @@ def remove_incident_protection(incident_id: int, user_email: str = Depends(curre
     """Remove an active Alibaba Cloud rule without rewriting the approval record."""
     _owned_incident(incident_id, user_email)
     return incident_service.remove_incident_protection(incident_id, user_email)
+
+
+@router.post("/{incident_id}/reapply-protection")
+def reapply_incident_protection(incident_id: int, user_email: str = Depends(current_user_email)) -> dict[str, Any]:
+    """Reapply an owner-removed block before its original temporary window ends."""
+    _owned_incident(incident_id, user_email)
+    return incident_service.reapply_incident_protection(incident_id, user_email)

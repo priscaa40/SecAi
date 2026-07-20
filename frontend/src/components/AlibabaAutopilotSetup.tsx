@@ -15,9 +15,9 @@ import type { AutopilotStatus, Session, Site } from "../types";
 import { AlibabaConnectorCard } from "./AlibabaConnectorCard";
 
 const actionCopy: Record<string, string> = {
-  monitor: "Keep watching",
-  notify_admin: "Notify my team",
-  block_ip: "Temporarily block one suspicious address",
+  collect_follow_up_cloud_evidence: "Collect fresh cloud evidence",
+  send_owner_alert: "Notify my team",
+  apply_temporary_ip_block: "Temporarily block one suspicious address",
 };
 
 function friendlyAction(action: string) {

@@ -1,13 +1,10 @@
-import { AlertTriangle, CheckCircle2, ChevronDown, CircleCheckBig, Clock3, Eye, RefreshCw, ShieldCheck, XCircle } from "lucide-react";
-import type { ReactNode } from "react";
+import { CheckCircle2, ChevronDown, Eye, RefreshCw, XCircle } from "lucide-react";
 
 import type { Incident, IncidentEvidence, RecommendedAction } from "../types";
 import {
   formatDate,
   friendlyText,
-  protectionStatusLabel,
   sourceLabel,
-  statusLabel,
 } from "./incidentPresentation";
 
 export function EvidencePanel({ evidence }: { evidence: IncidentEvidence[] }) {
@@ -45,31 +42,30 @@ export function HumanDecision({
   busy: boolean;
   onDecision: (action: "approve" | "reject", incidentId: number) => void;
 }) {
-  const needsDecision = incident.status === "needs_review" && action.action === "block_ip";
+  const needsDecision = incident.status === "needs_review" && action.action === "apply_temporary_ip_block";
+  const target = incident.protection.target || "this address";
+  const duration = incident.protection.duration_label || "1 hour";
   if (needsDecision) {
     return (
       <div className="decision-panel">
         <div>
-          <p className="eyebrow">Your decision</p>
-          <strong>Should SecAi apply this protection?</strong>
-          <span>Nothing will change until you approve it.</span>
+          <p className="eyebrow">Your action</p>
+          <strong>Nothing changes until you choose.</strong>
         </div>
         <div className="decision-row">
-          <button type="button" onClick={() => onDecision("approve", incident.id)} disabled={busy}><CheckCircle2 size={17} /> Approve protection</button>
-          <button type="button" className="secondary-button" onClick={() => onDecision("reject", incident.id)} disabled={busy}><XCircle size={17} /> Decline</button>
+          <button type="button" onClick={() => onDecision("approve", incident.id)} disabled={busy}><CheckCircle2 size={17} /> Block for {duration}</button>
+          <button type="button" className="secondary-button" onClick={() => onDecision("reject", incident.id)} disabled={busy}><XCircle size={17} /> Don&apos;t block</button>
         </div>
       </div>
     );
   }
 
-  const copy: Record<string, string> = {
-    approved: "You approved the recommended protection.",
-    rejected: "You declined the recommendation. No new protection will be started.",
-  };
+  const summary = incident.protection.human_action;
+  if (!summary) return null;
   return (
     <div className={`human-decision decision-${incident.status}`}>
-      <small>Human decision</small>
-      <strong>{copy[incident.status] || statusLabel(incident.status)}</strong>
+      <small>Your action</small>
+      <strong>{summary}</strong>
     </div>
   );
 }
@@ -80,35 +76,46 @@ export function ProtectionOutcome({
   busy,
   onRetry,
   onRemove,
+  onReapply,
 }: {
   incident: Incident;
   action: RecommendedAction;
   busy: boolean;
   onRetry: () => void;
   onRemove: () => void;
+  onReapply: () => void;
 }) {
   const protectionStatus = getProtectionStatus(incident, action);
   const providerRuleId = getProviderRuleId(incident);
   const error = incident.policy?.error_message;
-  const target = incident.policy?.target || action.target;
+  const target = incident.protection.target || "this address";
   const expiresAt = incident.policy?.expires_at;
-  const copy = protectionStatusCopy(protectionStatus);
-  const active = protectionStatus === "active";
+  const showProviderRule = protectionStatus === "active" && providerRuleId;
+  const hasOutcome = Boolean(
+    showProviderRule
+    || (expiresAt && protectionStatus === "active")
+    || error
+    || incident.protection.can_retry
+    || incident.protection.can_unblock
+    || incident.protection.can_reapply,
+  );
+
+  function unblock() {
+    if (window.confirm(`Unblock ${target} now? Requests from this address will be allowed again.`)) onRemove();
+  }
+
+  if (!hasOutcome) return null;
 
   return (
     <div className={`protection-outcome protection-${protectionStatus}`} role="status" aria-live="polite">
-      <div className="protection-outcome-heading">
-        <span>{copy.icon}</span>
-        <div><p className="eyebrow">Protection result</p><strong>{copy.title}</strong><small>{copy.description}</small></div>
-      </div>
-      {target ? <span><small>Address</small><strong>{String(target)}</strong></span> : null}
-      {providerRuleId ? <span><small>Alibaba rule</small><code>{providerRuleId}</code></span> : null}
-      {expiresAt && active ? <span><small>Scheduled to end</small><strong>{formatDate(expiresAt)}</strong></span> : null}
+      {showProviderRule ? <span><small>Alibaba rule</small><code>{providerRuleId}</code></span> : null}
+      {expiresAt && protectionStatus === "active" ? <span><small>Blocked until</small><strong>{formatDate(expiresAt)}</strong></span> : null}
       {error ? <p className="execution-error">{error}</p> : null}
-      {protectionStatus === "failed" || protectionStatus === "pending" ? (
-        <button type="button" onClick={onRetry} disabled={busy}><RefreshCw size={16} /> Retry protection</button>
+      {incident.protection.can_retry ? (
+        <button type="button" onClick={onRetry} disabled={busy}><RefreshCw size={16} /> Retry block</button>
       ) : null}
-      {active ? <button type="button" className="danger-button" onClick={onRemove} disabled={busy}>Remove protection</button> : null}
+      {incident.protection.can_unblock ? <button type="button" className="danger-button" onClick={unblock} disabled={busy}>Unblock {target}</button> : null}
+      {incident.protection.can_reapply ? <button type="button" onClick={onReapply} disabled={busy}>Block {target} again</button> : null}
     </div>
   );
 }
@@ -125,27 +132,11 @@ export function buildEvidence(incident: Incident, action: RecommendedAction): In
 
 export function getProtectionStatus(incident: Incident, action: RecommendedAction) {
   if (incident.policy?.status) return incident.policy.status;
-  if (action.action !== "block_ip") return "not_required";
+  if (action.action !== "apply_temporary_ip_block") return "not_required";
   if (incident.status === "needs_review" || incident.status === "rejected") return "not_started";
   return incident.execution_status || "not_started";
 }
 
 export function getProviderRuleId(incident: Incident) {
   return incident.policy?.provider_rule_id || null;
-}
-
-function protectionStatusCopy(status: string) {
-  const waitingIcon = <Clock3 size={19} />;
-  const copy: Record<string, { title: string; description: string; icon: ReactNode }> = {
-    not_required: { title: "No traffic change needed", description: "This response only reports or continues monitoring.", icon: <Eye size={19} /> },
-    not_started: { title: "No protection applied", description: "Your website traffic has not been changed.", icon: waitingIcon },
-    pending: { title: "Protection is waiting to start", description: "Your approval was saved and the change is queued.", icon: waitingIcon },
-    applying: { title: "Protection is being applied", description: "SecAi is waiting for Alibaba Cloud to confirm the rule.", icon: <RefreshCw size={19} className="spin" /> },
-    active: { title: "Protection is active", description: "Alibaba Cloud confirmed the temporary rule.", icon: <ShieldCheck size={19} /> },
-    revoking: { title: "Protection is being removed", description: "SecAi is waiting for Alibaba Cloud to remove the rule.", icon: <RefreshCw size={19} className="spin" /> },
-    revoked: { title: "Protection was removed", description: "The temporary rule is no longer active.", icon: <CircleCheckBig size={19} /> },
-    expired: { title: "Protection ended", description: "The temporary rule reached its planned end time.", icon: <CircleCheckBig size={19} /> },
-    failed: { title: "Protection failed", description: "Alibaba Cloud did not confirm the requested change.", icon: <AlertTriangle size={19} /> },
-  };
-  return copy[status] || { title: protectionStatusLabel(status), description: "See the report record for the current state.", icon: waitingIcon };
 }

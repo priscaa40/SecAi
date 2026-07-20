@@ -6,6 +6,8 @@ from fastapi import HTTPException
 
 from secai import database
 from secai.actions import remediation
+from secai.actions.capabilities import action_spec
+from secai.agent.action_jobs import wake_action_worker
 from secai.models import ApprovalIn
 
 
@@ -15,49 +17,28 @@ def approve_incident(
     approved_by: str,
     channel: str = "dashboard",
 ) -> dict[str, Any]:
-    """Atomically approve an incident and execute its recommended policy once."""
+    """Persist owner approval and queue the approved action for Qwen Executor."""
     incident = database.get_incident(incident_id)
     if not incident:
         raise HTTPException(status_code=404, detail="Incident not found")
     if incident["status"] == "rejected":
         raise HTTPException(status_code=409, detail="Rejected incidents cannot be approved.")
-    if incident["status"] == "approved":
-        return {
-            "incident": incident,
-            "policy": database.get_policy_for_incident(incident_id),
-            "approved_by": approved_by,
-            "already_final": True,
-        }
-    if incident["status"] == "applying":
-        raise HTTPException(status_code=409, detail="This incident decision is already being processed.")
-
-    claimed = database.transition_incident_status(incident_id, {"needs_review"}, "applying")
-    if not claimed:
-        raise HTTPException(status_code=409, detail="This incident can no longer be approved.")
+    spec = action_spec((incident.get("recommended_action") or {}).get("action", ""))
+    if not spec.requires_approval:
+        raise HTTPException(status_code=409, detail="This action does not require owner approval.")
+    database.ensure_action_job(incident_id, incident["site_id"], spec.name, spec.tool_name, True)
     try:
-        policy = remediation.create_policy_for_incident(claimed, claimed["recommended_action"])
+        result = database.approve_and_queue_action(incident_id, approved_by, channel, payload.note)
     except ValueError as exc:
-        database.transition_incident_status(incident_id, {"applying"}, "needs_review")
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except Exception:
-        database.transition_incident_status(incident_id, {"applying"}, "needs_review")
-        raise
-
-    updated = database.transition_incident_status(incident_id, {"applying"}, "approved")
-    if not updated:
-        raise HTTPException(status_code=409, detail="The incident status changed while approval was running.")
-    database.consume_approval_token(incident_id)
-    decision = database.record_approval_decision(
-        incident_id,
-        incident["site_id"],
-        approved_by,
-        channel,
-        "approved",
-        payload.note,
-        incident["status"],
-        updated["status"],
-    )
-    return {"incident": updated, "policy": policy, "approved_by": approved_by, "decision": decision}
+        status = 404 if str(exc) == "Incident not found" else 409
+        raise HTTPException(status_code=status, detail=str(exc)) from exc
+    wake_action_worker()
+    return {
+        **result,
+        "policy": database.get_policy_for_incident(incident_id),
+        "approved_by": approved_by,
+        "execution": "queued" if result["action_job"]["status"] == "queued" else result["action_job"]["status"],
+    }
 
 
 def reject_incident(
@@ -70,47 +51,40 @@ def reject_incident(
     incident = database.get_incident(incident_id)
     if not incident:
         raise HTTPException(status_code=404, detail="Incident not found")
-    if incident["status"] == "rejected":
-        return {"incident": incident, "rejected_by": rejected_by, "note": payload.note, "already_final": True}
-    if incident["status"] != "needs_review":
-        raise HTTPException(
-            status_code=409,
-            detail="Only an action waiting for review can be rejected. Remove active protection separately.",
-        )
-    updated = database.transition_incident_status(incident_id, {"needs_review"}, "rejected")
-    if not updated:
-        raise HTTPException(status_code=409, detail="This incident can no longer be rejected.")
-    database.consume_approval_token(incident_id)
-    decision = database.record_approval_decision(
-        incident_id,
-        incident["site_id"],
-        rejected_by,
-        channel,
-        "rejected",
-        payload.note,
-        incident["status"],
-        updated["status"],
-    )
-    return {
-        "incident": updated,
-        "rejected_by": rejected_by,
-        "note": payload.note,
-        "decision": decision,
-    }
+    spec = action_spec((incident.get("recommended_action") or {}).get("action", ""))
+    if not spec.requires_approval:
+        raise HTTPException(status_code=409, detail="This action does not require owner approval.")
+    database.ensure_action_job(incident_id, incident["site_id"], spec.name, spec.tool_name, True)
+    try:
+        result = database.reject_action(incident_id, rejected_by, channel, payload.note)
+    except ValueError as exc:
+        status = 404 if str(exc) == "Incident not found" else 409
+        raise HTTPException(status_code=status, detail=str(exc)) from exc
+    return {**result, "rejected_by": rejected_by, "note": payload.note}
 
 
 def retry_incident_action(incident_id: int, requested_by: str) -> dict[str, Any]:
-    """Retry provider execution without changing the owner's recorded decision."""
+    """Requeue the failed Qwen Executor job without changing owner approval."""
     incident = database.get_incident(incident_id)
     if not incident:
         raise HTTPException(status_code=404, detail="Incident not found")
-    if incident["status"] != "approved":
-        raise HTTPException(status_code=409, detail="Approve this action before retrying protection.")
-    policy = database.get_policy_for_incident(incident_id)
-    if not policy or policy["status"] not in {"pending", "failed"}:
-        raise HTTPException(status_code=409, detail="This protection is not waiting for a retry.")
-    policy = remediation.retry_policy_for_incident(incident)
-    return {"incident": incident, "policy": policy, "requested_by": requested_by}
+    job = database.get_action_job_for_incident(incident_id)
+    if not job or job["status"] != "failed":
+        raise HTTPException(status_code=409, detail="This action is not waiting for a retry.")
+    eligible_status = "approved" if job["requires_approval"] else "reported"
+    if incident["status"] != eligible_status:
+        raise HTTPException(status_code=409, detail="This incident is not eligible to retry its action.")
+    queued = database.retry_action_job(job["id"])
+    if not queued:
+        raise HTTPException(status_code=409, detail="This action reached its retry limit.")
+    wake_action_worker()
+    return {
+        "incident": incident,
+        "policy": database.get_policy_for_incident(incident_id),
+        "action_job": queued,
+        "execution": "queued",
+        "requested_by": requested_by,
+    }
 
 
 def remove_incident_protection(incident_id: int, requested_by: str) -> dict[str, Any]:
@@ -131,4 +105,18 @@ def remove_incident_protection(incident_id: int, requested_by: str) -> dict[str,
         policy = remediation.revoke_policy_for_incident(incident, final_status="revoked")
     except Exception as exc:
         raise HTTPException(status_code=502, detail="Alibaba Cloud could not remove this protection.") from exc
+    return {"incident": incident, "policy": policy, "requested_by": requested_by}
+
+
+def reapply_incident_protection(incident_id: int, requested_by: str) -> dict[str, Any]:
+    """Apply a manually removed block again before its original window ends."""
+    incident = database.get_incident(incident_id)
+    if not incident:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    if incident["status"] != "approved":
+        raise HTTPException(status_code=409, detail="Approve this protection before applying it again.")
+    try:
+        policy = remediation.reapply_policy_for_incident(incident)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"incident": incident, "policy": policy, "requested_by": requested_by}
