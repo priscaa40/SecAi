@@ -19,12 +19,13 @@ os.environ.setdefault(
 
 
 TABLES = [
+    "qwen_usage",
+    "action_jobs",
+    "remediation_executions",
     "approval_decisions",
     "approval_tokens",
-    "remediation_executions",
     "site_alibaba_autopilot_configs",
     "site_report_channels",
-    "qwen_usage",
     "analysis_jobs",
     "policies",
     "incidents",
@@ -52,8 +53,16 @@ def _reset_test_database() -> None:
     database.create_user("owner@example.com", auth_service.hash_password("password123"))
     with database.connect() as conn:
         conn.execute(
-            "insert into sites (site_id, name, owner_email, ingest_key, created_at) values (?, ?, ?, ?, ?)",
-            ("test-site", "Test Website", "owner@example.com", "test-key", database.utc_now()),
+            "insert into sites (site_id, name, owner_email, ingest_key, evidence_source, created_at) "
+            "values (?, ?, ?, ?, ?, ?)",
+            (
+                "test-site",
+                "Test Website",
+                "owner@example.com",
+                "test-key",
+                "alibaba_autopilot",
+                database.utc_now(),
+            ),
         )
 
 

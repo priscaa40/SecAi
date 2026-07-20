@@ -7,7 +7,6 @@ from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from secai import database
-from secai.actions import mcp_client as action_mcp
 from secai.actions.expiry import start_policy_expiry, stop_policy_expiry
 from secai.actions.retention import start_retention_worker, stop_retention_worker
 from secai.agent.action_jobs import start_action_worker, stop_action_worker
@@ -20,7 +19,6 @@ from secai.event_sources import alibaba_sls
 from secai.event_sources.scheduler import start_sls_polling, stop_sls_polling
 from secai.integrations import alibaba_autopilot, alibaba_coordinates, alibaba_credentials, discord
 from secai.integrations.qwen_cloud import QwenClient
-from secai.knowledge import mcp_client as security_knowledge_mcp
 from secai.security import rate_limit
 from secai.settings import get_settings
 
@@ -121,10 +119,6 @@ async def lifespan(_: FastAPI):
     sls_stopped = stop_sls_polling()
     analysis_stopped = stop_analysis_worker()
     action_stopped = stop_action_worker()
-    if analysis_stopped:
-        security_knowledge_mcp.close()
-    if action_stopped:
-        action_mcp.close()
     if all((retention_stopped, expiry_stopped, sls_stopped, analysis_stopped, action_stopped)):
         database.close_database_pool()
 

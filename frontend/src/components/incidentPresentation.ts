@@ -9,11 +9,10 @@ export const AGENT_LABELS: Record<string, { label: string; description: string }
   investigator: { label: "Investigator", description: "Finds related activity and identifies the likely threat." },
   reviewer: { label: "Reviewer", description: "Challenges the evidence and filters weak conclusions." },
   responder: { label: "Responder", description: "Explains the risk and recommends the safest response." },
-  executor: { label: "Executor", description: "Invokes the approved action through its guarded MCP tool." },
+  executor: { label: "Executor", description: "Carries out the reviewed response after any required approval." },
 };
 
 export const ACTIVE_JOB_STATUSES = new Set(["queued", "running"]);
-export const FAILED_JOB_STATUSES = new Set(["failed"]);
 
 export function friendlyText(value: string) {
   return value.replaceAll("_", " ").replace(/\b\w/g, (character) => character.toUpperCase());
@@ -53,15 +52,6 @@ export function sourceLabel(value?: string | null) {
   return friendlyText(value);
 }
 
-export function jobLabel(status: string) {
-  const labels: Record<string, string> = {
-    queued: "Waiting to investigate",
-    running: "Investigation in progress",
-    failed: "Investigation failed",
-  };
-  return labels[status] || friendlyText(status);
-}
-
 export function protectionStatusLabel(status: string) {
   const labels: Record<string, string> = {
     not_required: "No traffic change",
@@ -76,7 +66,7 @@ export function protectionStatusLabel(status: string) {
     awaiting_approval: "Waiting for your approval",
     queued: "Queued for Qwen Executor",
     running: "Qwen Executor running",
-    succeeded: "Executed through MCP",
+    succeeded: "Completed",
     rejected: "Declined",
   };
   return labels[status] || friendlyText(status);

@@ -64,29 +64,11 @@ export async function apiRequest<T>(
   return response.json() as Promise<T>;
 }
 
-export function analysisJob(session: Session, jobId: number) {
-  return apiRequest<{ job: AnalysisJob; incident?: Incident | null }>(
-    session.apiBase,
-    `/api/analysis-jobs/${jobId}`,
-    {},
-    session.token,
-  );
-}
-
 export function listAnalysisJobs(session: Session, siteId: string) {
   return apiRequest<{ jobs: AnalysisJob[] }>(
     session.apiBase,
     `/api/analysis-jobs?site_id=${encodeURIComponent(siteId)}`,
     {},
-    session.token,
-  );
-}
-
-export function retryAnalysisJob(session: Session, jobId: number) {
-  return apiRequest<{ job: AnalysisJob }>(
-    session.apiBase,
-    `/api/analysis-jobs/${jobId}/retry`,
-    { method: "POST" },
     session.token,
   );
 }

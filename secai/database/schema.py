@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from secai.database.migrations import migrate
-
 
 def initialize(conn: Any, database_path: str, schema_version: int) -> None:
     """Create the current SecAi schema or reject a database from another schema generation."""
@@ -18,16 +16,12 @@ def initialize(conn: Any, database_path: str, schema_version: int) -> None:
     if existing_tables and "schema_metadata" not in existing_tables:
         raise RuntimeError("Unsupported pre-v1 SecAi database. Use an empty database with this release.")
     if "schema_metadata" in existing_tables:
-        version_query = "select version from schema_metadata where singleton = 1"
-        if dialect == "postgresql":
-            version_query += " for update"
-        version = conn.execute(version_query).fetchone()
+        version = conn.execute("select version from schema_metadata where singleton = 1").fetchone()
         found = version["version"] if version else "missing"
-        if not version:
+        if not version or int(found) != schema_version:
             raise RuntimeError(
                 f"Unsupported SecAi database schema {found}; this release requires schema {schema_version}."
             )
-        migrate(conn, int(found), schema_version)
     schema_sql = SCHEMA_SQL
     if dialect == "postgresql":
         schema_sql = schema_sql.replace(

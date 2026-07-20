@@ -32,13 +32,3 @@ def call_tool(name: str, arguments: dict[str, Any] | None = None) -> Any:
 def list_tools() -> list[dict[str, Any]]:
     """Discover SecAi security knowledge tools through official MCP stdio."""
     return _client().list_tools()
-
-
-def close() -> None:
-    """Close the shared MCP client and its subprocess."""
-    global _shared_client
-    with _shared_client_lock:
-        client = _shared_client
-        _shared_client = None
-    if client:
-        client.close()

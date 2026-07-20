@@ -21,7 +21,3 @@ def list_tools() -> list[dict[str, Any]]:
 
 def call_tool(name: str, arguments: dict[str, Any] | None = None) -> Any:
     return _client().call_tool(name, arguments)
-
-
-def close() -> None:
-    """Each official stdio MCP session closes after its call."""

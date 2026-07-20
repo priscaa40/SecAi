@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import Callable
 from typing import Any
 from urllib.error import URLError
 from urllib.parse import urlencode
@@ -125,33 +124,6 @@ def query_osv(ecosystem: str, package: str, version: str | None = None) -> dict[
         "query": payload,
         "vulnerabilities": vulnerabilities,
     }
-
-
-def call_tool(name: str | None, arguments: dict[str, Any] | None = None) -> Any:
-    """Call one SecAi security knowledge MCP tool by name."""
-    args = arguments or {}
-    handlers: dict[str, Callable[[dict[str, Any]], Any]] = {
-        "list_security_profiles": lambda params: list_entries(),
-        "lookup_security_profile": lambda params: (
-            get_entry(params["entry_id"]) or {"error": "unknown security profile"}
-        ),
-        "find_matching_security_profiles": lambda params: find_matching_entries(
-            params["event"], limit=params.get("limit", 5)
-        ),
-        "search_nvd_vulnerabilities": lambda params: search_nvd(
-            keyword=params.get("keyword"),
-            cwe_id=params.get("cwe_id"),
-            limit=params.get("limit", 5),
-        ),
-        "query_osv_package_vulnerabilities": lambda params: query_osv(
-            ecosystem=params["ecosystem"],
-            package=params["package"],
-            version=params.get("version"),
-        ),
-    }
-    if name not in handlers:
-        raise ValueError(f"Unknown security knowledge tool: {name}")
-    return handlers[name](args)
 
 
 @mcp.tool(name="list_security_profiles")

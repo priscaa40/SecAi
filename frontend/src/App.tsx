@@ -140,7 +140,7 @@ function App() {
     await workspace.loadWorkspace(activeSession, incident.site_id);
     workspace.setSelectedIncidentId(incident.id);
     if (requestedApproval === "queued" && incident.status === "approved") {
-      workspace.setStatus("Your approval was recorded. Qwen Executor is applying it through MCP.");
+      workspace.setStatus("Your approval was recorded. The Executor is applying the approved protection.");
     }
     if (requestedApproval === "rejected" && incident.status === "rejected") {
       workspace.setStatus("Your decision was recorded. No action will be taken.");
@@ -176,7 +176,6 @@ function App() {
         onSelectIncident={workspace.setSelectedIncidentId}
         onDecision={workspace.handleDecision}
         onProtection={workspace.handleProtection}
-        onRetryAnalysisJob={workspace.handleAnalysisRetry}
       />
     );
   }

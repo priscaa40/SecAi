@@ -10,7 +10,6 @@ import {
   rejectIncident,
   removeIncidentProtection,
   reapplyIncidentProtection,
-  retryAnalysisJob,
   retryIncidentProtection,
 } from "../api";
 import { ACTIVE_JOB_STATUSES } from "../components/incidentPresentation";
@@ -223,20 +222,6 @@ export function useWorkspace(session: Session | null) {
     }
   }
 
-  async function handleAnalysisRetry(jobId: number) {
-    if (!session) return;
-    setBusy(true);
-    try {
-      await retryAnalysisJob(session, jobId);
-      await loadWorkspace(session);
-      setStatus("The investigation is queued to run again.");
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : "We could not retry this investigation.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
   return {
     sites,
     incidents,
@@ -261,6 +246,5 @@ export function useWorkspace(session: Session | null) {
     handleSiteChange,
     handleDecision,
     handleProtection,
-    handleAnalysisRetry,
   };
 }

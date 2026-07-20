@@ -1,38 +1,26 @@
 import { CheckCircle2, CircleCheckBig, Clock3 } from "lucide-react";
 import { useMemo, useState } from "react";
 
-import type { AnalysisJob, Incident } from "../types";
+import type { Incident } from "../types";
 import {
-  ACTIVE_JOB_STATUSES,
-  FAILED_JOB_STATUSES,
   formatDate,
   friendlyText,
   statusLabel,
 } from "./incidentPresentation";
-import { InvestigationProgress } from "./InvestigationProgress";
 
 type IncidentFilter = "attention" | "all" | "handled";
 
 export function IncidentQueue({
   incidents,
-  analysisJobs,
   selectedIncidentId,
   onSelect,
-  onRetry,
-  busy,
 }: {
   incidents: Incident[];
-  analysisJobs: AnalysisJob[];
   selectedIncidentId: number | null;
   onSelect: (incidentId: number) => void;
-  onRetry: (jobId: number) => void;
-  busy: boolean;
 }) {
   const [filter, setFilter] = useState<IncidentFilter>("all");
   const attentionCount = incidents.filter((incident) => incident.status === "needs_review").length;
-  const visibleJobs = analysisJobs
-    .filter((job) => ACTIVE_JOB_STATUSES.has(job.status) || FAILED_JOB_STATUSES.has(job.status))
-    .slice(0, 3);
   const visibleIncidents = useMemo(() => {
     if (filter === "attention") return incidents.filter((incident) => incident.status === "needs_review");
     if (filter === "handled") return incidents.filter((incident) => incident.status !== "needs_review");
@@ -45,13 +33,6 @@ export function IncidentQueue({
         <div><p className="eyebrow">Activity</p><h2>Reports</h2></div>
         <span className="counter">{incidents.length}</span>
       </div>
-      {visibleJobs.length ? (
-        <div className="analysis-job-list" aria-label="Current investigations" aria-live="polite">
-          {visibleJobs.map((job) => {
-            return <InvestigationProgress job={job} compact busy={busy} onRetry={onRetry} key={job.id} />;
-          })}
-        </div>
-      ) : null}
       <div className="filter-tabs" aria-label="Filter security reports">
         <button type="button" aria-pressed={filter === "attention"} className={filter === "attention" ? "active" : ""} onClick={() => setFilter("attention")}>Needs you {attentionCount ? <span>{attentionCount}</span> : null}</button>
         <button type="button" aria-pressed={filter === "all"} className={filter === "all" ? "active" : ""} onClick={() => setFilter("all")}>All</button>

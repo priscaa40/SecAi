@@ -80,7 +80,9 @@ def _worker_loop() -> None:
                     error="Stored evidence is missing.",
                 )
                 continue
-            run_analysis_job(event, job["id"], send_notification=True)
+            _, outcome = run_analysis_job(event, job["id"], send_notification=True)
+            if outcome["status"] == "failed":
+                _retry_failed_job(job["id"])
         except Exception:
             logger.exception("Unexpected analysis worker failure for job %s", job["id"])
             failed_job = database.get_analysis_job(job["id"])
@@ -88,8 +90,9 @@ def _worker_loop() -> None:
                 job["id"],
                 status="failed",
                 current_step=_visible_failure_step(failed_job, "starting"),
-                error="The investigation could not finish. Try again from the dashboard.",
+                error="The investigation could not finish.",
             )
+            _retry_failed_job(job["id"])
         finally:
             _active_job_id = None
 
@@ -139,6 +142,20 @@ def job_analysis(job: dict[str, Any]) -> dict[str, str | int | None]:
     }
 
 
+def _retry_failed_job(job_id: int) -> bool:
+    """Automatically requeue a failed investigation while attempts remain."""
+    retried = database.retry_analysis_job(job_id, max_attempts=3)
+    if not retried:
+        return False
+    logger.warning(
+        "SecAi automatically requeued analysis job %s after attempt %s",
+        job_id,
+        retried.get("attempt_count"),
+    )
+    _wake_event.set()
+    return True
+
+
 def _visible_failure_step(job: dict[str, Any] | None, fallback: str) -> str:
     """Keep the active agent visible instead of replacing it with a generic failure step."""
     step = str((job or {}).get("current_step") or "")
@@ -156,4 +173,4 @@ def safe_analysis_error(exc: Exception) -> str:
         return "The investigation could not safely process this evidence. Review it and try again."
     if isinstance(exc, TimeoutError):
         return "The investigation took too long. Try again from the dashboard."
-    return "The investigation could not finish. Try again from the dashboard."
+    return "The investigation could not finish."

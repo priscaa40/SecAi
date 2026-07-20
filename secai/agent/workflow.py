@@ -56,14 +56,30 @@ def build_workflow():
 def _investigator_node(state: SecAiState) -> SecAiState:
     _mark_step(state, "investigator")
     event = state["event"]
+    prompt = _investigation_prompt(event)
     investigation = runtime.invoke_structured_agent(
         "investigator",
         InvestigationDecision,
         INVESTIGATOR_PROMPT,
-        _investigation_prompt(event),
+        prompt,
         tools=_investigator_tools(event),
     )
-    security_profile = validate_investigation_decision(investigation, event)
+    try:
+        security_profile = validate_investigation_decision(investigation, event)
+    except ValueError as exc:
+        investigation = runtime.invoke_structured_agent(
+            "investigator",
+            InvestigationDecision,
+            INVESTIGATOR_PROMPT,
+            _semantic_repair_prompt(
+                role="Investigator",
+                original_prompt=prompt,
+                previous_response=investigation.model_dump(),
+                validation_error=str(exc),
+            ),
+            tools=_investigator_tools(event),
+        )
+        security_profile = validate_investigation_decision(investigation, event)
     return {"investigation": investigation, "security_profile": security_profile}
 
 
@@ -89,23 +105,39 @@ def _reviewer_node(state: SecAiState) -> SecAiState:
 def _responder_node(state: SecAiState) -> SecAiState:
     _mark_step(state, "responder")
     event = state["event"]
+    prompt = _bounded_json(
+        {
+            "event": event,
+            "investigation": state["investigation"].model_dump(),
+            "security_profile": state["security_profile"],
+            "review": state["review"].model_dump(),
+            "response_capabilities": response_capabilities(event),
+        },
+        default=str,
+    )
     response = runtime.invoke_structured_agent(
         "responder",
         IncidentResponse,
         RESPONDER_PROMPT,
-        _bounded_json(
-            {
-                "event": event,
-                "investigation": state["investigation"].model_dump(),
-                "security_profile": state["security_profile"],
-                "review": state["review"].model_dump(),
-                "response_capabilities": response_capabilities(event),
-            },
-            default=str,
-        ),
+        prompt,
         tools=[],
     )
-    validate_response_decision(response, event)
+    try:
+        validate_response_decision(response, event)
+    except ValueError as exc:
+        response = runtime.invoke_structured_agent(
+            "responder",
+            IncidentResponse,
+            RESPONDER_PROMPT,
+            _semantic_repair_prompt(
+                role="Responder",
+                original_prompt=prompt,
+                previous_response=response.model_dump(),
+                validation_error=str(exc),
+            ),
+            tools=[],
+        )
+        validate_response_decision(response, event)
     return {"response": response}
 
 
@@ -167,6 +199,29 @@ def _bounded_json(value: Any, default: Any = str) -> str:
             "instruction": "Use only the available bounded evidence; do not infer omitted content.",
         },
         separators=(",", ":"),
+    )
+
+
+def _semantic_repair_prompt(
+    *,
+    role: str,
+    original_prompt: str,
+    previous_response: dict[str, Any],
+    validation_error: str,
+) -> str:
+    """Give Qwen one bounded chance to correct a guardrail-invalid decision."""
+    return _bounded_json(
+        {
+            "task": f"Correct your previous {role} response and return the required structured response again.",
+            "application_validation_error": validation_error,
+            "previous_response": previous_response,
+            "original_task": original_prompt,
+            "instruction": (
+                "Change only what is necessary to satisfy the application guardrail. "
+                "Remain grounded in the original evidence and do not invent facts or capabilities."
+            ),
+        },
+        default=str,
     )
 
 

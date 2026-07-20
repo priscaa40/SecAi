@@ -104,14 +104,11 @@ export function IncidentReport({
           ) : null}
 
           {action.action !== "apply_temporary_ip_block" && incident.action_job ? (
-            <div className="human-decision" role="status" aria-live="polite">
-              <small>Autopilot action via MCP</small>
-              <strong>{friendlyText(incident.action_job.status)}</strong>
-              {incident.action_job.error ? <p className="execution-error">{incident.action_job.error}</p> : null}
-              {incident.action_job.status === "failed" ? (
-                <button type="button" onClick={() => onProtection("retry", incident.id)} disabled={busy}>Retry autopilot action</button>
-              ) : null}
-            </div>
+            <AutomaticActionOutcome
+              incident={incident}
+              busy={busy}
+              onRetry={() => onProtection("retry", incident.id)}
+            />
           ) : null}
 
           {incident.status === "needs_review" && !requiresDecision ? (
@@ -160,7 +157,7 @@ export function IncidentReport({
                   <div>
                     <div className="trace-heading"><strong>{role.label}</strong>{duration ? <span>Completed in {duration}</span> : null}</div>
                     <small className="trace-role-description">{role.description}</small>
-                    <p>{step.summary}</p>
+                    <p>{step.summary || agentCompletionSummary(step.agent)}</p>
                     {step.decision ? <small>Result: {friendlyText(step.decision)}</small> : null}
                   </div>
                 </article>
@@ -181,4 +178,62 @@ export function IncidentReport({
       </div>
     </article>
   );
+}
+
+function AutomaticActionOutcome({
+  incident,
+  busy,
+  onRetry,
+}: {
+  incident: Incident;
+  busy: boolean;
+  onRetry: () => void;
+}) {
+  const job = incident.action_job;
+  if (!job) return null;
+  const result = job.result.tool_result || {};
+  let title = "Executor is preparing the response";
+  let detail = "SecAi is carrying out the reviewed next step.";
+
+  if (job.status === "queued") {
+    title = "Executor is queued";
+    detail = "The reviewed response will run shortly.";
+  } else if (job.status === "running") {
+    title = "Executor is working";
+    detail = "The reviewed response is being carried out now.";
+  } else if (job.status === "failed") {
+    title = "The automatic response could not finish";
+    detail = job.error || "Retry the response from this report.";
+  } else if (job.status === "succeeded" && job.action === "send_owner_alert") {
+    const deliveredExternally = result.external_alert_delivered === true;
+    title = deliveredExternally ? "Alert delivered" : "Report available";
+    detail = deliveredExternally
+      ? "The security report was delivered through the configured alert channel."
+      : "The security report is ready here for review.";
+  } else if (job.status === "succeeded" && job.action === "collect_follow_up_cloud_evidence") {
+    const eventsSeen = numericResult(result.events_seen);
+    const newEvidence = numericResult(result.new_evidence);
+    title = "Cloud evidence refreshed";
+    detail = eventsSeen === null
+      ? "SecAi checked the latest connected cloud activity."
+      : `Checked ${eventsSeen} recent ${eventsSeen === 1 ? "record" : "records"} and found ${newEvidence || 0} new evidence ${newEvidence === 1 ? "item" : "items"}.`;
+  }
+
+  return (
+    <div className={`human-decision decision-${job.status}`} role="status" aria-live="polite">
+      <small>Automatic response</small>
+      <strong>{title}</strong>
+      <p>{detail}</p>
+      {job.status === "failed" ? <button type="button" onClick={onRetry} disabled={busy}>Retry response</button> : null}
+    </div>
+  );
+}
+
+function numericResult(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function agentCompletionSummary(agent: string) {
+  if (agent === "executor") return "Carried out the reviewed response.";
+  return "Completed this stage of the investigation.";
 }

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import threading
 from datetime import timedelta
@@ -19,7 +20,13 @@ class StdioMcpClient:
     """Thread-safe synchronous facade over the official async MCP stdio client."""
 
     def __init__(self, module: str, *, timeout_seconds: float = 10) -> None:
-        self._server = StdioServerParameters(command=sys.executable, args=["-m", module])
+        self._server = StdioServerParameters(
+            command=sys.executable,
+            args=["-m", module],
+            # SecAi only launches its own trusted MCP modules. They need the
+            # same database and provider configuration as the API process.
+            env=dict(os.environ),
+        )
         self._timeout_seconds = max(0.1, timeout_seconds)
         self._lock = threading.Lock()
 
@@ -45,9 +52,6 @@ class StdioMcpClient:
             payload = result.structuredContent
             return payload.get("result", payload) if isinstance(payload, dict) else payload
         return _content_payload(result.content)
-
-    def close(self) -> None:
-        """Compatibility hook; each official stdio session is scoped to one call."""
 
     async def _list_tools(self):
         async with stdio_client(self._server) as (read_stream, write_stream), ClientSession(

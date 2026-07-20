@@ -1,111 +1,93 @@
-import { AlertTriangle, Check, Clock3, RefreshCw } from "lucide-react";
+import { AlertTriangle, Check, Clock3, Minus, RefreshCw } from "lucide-react";
 
-import type { AnalysisJob } from "../types";
+import type { ActionJob, AnalysisJob, Incident } from "../types";
 import { formatDate } from "./incidentPresentation";
 
-type AgentName = "investigator" | "reviewer" | "responder";
-type AgentStatus = "waiting" | "working" | "complete" | "failed";
+type AgentName = "investigator" | "reviewer" | "responder" | "executor";
+type AgentStatus = "waiting" | "working" | "complete" | "skipped" | "failed";
 
-const AGENTS: { name: AgentName; label: string; description: string }[] = [
-  {
-    name: "investigator",
-    label: "Investigator",
-    description: "Examining the evidence and identifying the likely attack.",
-  },
-  {
-    name: "reviewer",
-    label: "Reviewer",
-    description: "Checking the evidence and challenging the Investigator's conclusion.",
-  },
-  {
-    name: "responder",
-    label: "Responder",
-    description: "Turning the reviewed findings into a clear report and recommending the safest next step.",
-  },
+const AGENTS: { name: AgentName; label: string }[] = [
+  { name: "investigator", label: "Investigator" },
+  { name: "reviewer", label: "Reviewer" },
+  { name: "responder", label: "Responder" },
+  { name: "executor", label: "Executor" },
 ];
 
 export function InvestigationProgress({
   job,
-  compact = false,
-  busy = false,
-  onRetry,
+  incident,
 }: {
-  job: AnalysisJob;
-  compact?: boolean;
-  busy?: boolean;
-  onRetry?: (jobId: number) => void;
+  job?: AnalysisJob | null;
+  incident?: Incident | null;
 }) {
-  const stages = agentStages(job);
-  const active = stages.find((stage) => stage.status === "working");
-  const failed = stages.find((stage) => stage.status === "failed");
-  const evidence = job.event || job.evidence?.[0];
-  const request = [evidence?.method, evidence?.path].filter(Boolean).join(" ");
-  const canRetry = job.status === "failed" && job.attempt_count < 3 && onRetry;
-  const finalizing = job.status === "running" && job.current_step === "persist_incident";
-  const savingFailed = job.status === "failed" && job.current_step === "persist_incident";
-  let heading = "Starting the investigation";
-  if (job.status === "queued") heading = "Waiting for the Investigator";
-  if (job.status === "failed") heading = "The investigation could not start";
-  if (finalizing) heading = "Preparing the report";
-  if (active) heading = `${active.label} is working`;
-  if (savingFailed) heading = "The report could not be saved";
-  if (failed) heading = `${failed.label} could not finish`;
+  if (!job && !incident) return null;
+  const stages = agentStages(job, incident?.action_job);
+  const identifier = job ? `Investigation #${job.id}` : `Report #${incident?.id}`;
+  const startedAt = job?.created_at || incident?.created_at;
 
   return (
-    <article className={`investigation-progress ${compact ? "compact" : ""} job-${job.status}`} aria-live="polite">
+    <aside className="investigation-pipeline" aria-label={`${identifier} agent progress`} aria-live="polite">
       <header>
-        <span className="investigation-progress-icon">
-          {job.status === "failed" ? <AlertTriangle size={18} /> : <RefreshCw size={18} className={active ? "spin" : ""} />}
-        </span>
-        <div>
-          <p className="eyebrow">Investigation #{job.id}</p>
-          <strong>{heading}</strong>
-          <small>{request || `Started ${formatDate(job.created_at)}`}</small>
-        </div>
-        {canRetry ? <button type="button" onClick={() => onRetry?.(job.id)} disabled={busy}>Retry</button> : null}
+        <span><strong>{identifier}</strong><small>{formatDate(startedAt)}</small></span>
       </header>
-
-      <ol className="investigation-agents">
+      <ol>
         {stages.map((stage) => (
-          <li className={`agent-stage stage-${stage.status}`} key={stage.name}>
-            <span className="agent-stage-marker" aria-hidden="true">
-              {stage.status === "complete" ? <Check size={13} /> : stage.status === "working" ? <RefreshCw size={12} className="spin" /> : stage.status === "failed" ? <AlertTriangle size={12} /> : <Clock3 size={12} />}
-            </span>
-            <div>
-              <span><strong>{stage.label}</strong><small>{stageStatusLabel(stage.status)}</small></span>
-              <p>{stage.description}</p>
-            </div>
+          <li className={`pipeline-stage stage-${stage.status}`} key={stage.name}>
+            <span className="pipeline-stage-marker" aria-hidden="true">{stageIcon(stage.status)}</span>
+            <span><strong>{stage.label}</strong><small>{stage.statusLabel}</small></span>
           </li>
         ))}
       </ol>
-
-      {finalizing ? <p className="investigation-system-step">All three agents are complete. SecAi is saving the report.</p> : null}
-      {job.error ? <p className="investigation-error">{job.error}</p> : null}
-      {job.status === "failed" && !canRetry ? <small className="retry-limit">Retry limit reached</small> : null}
-    </article>
+    </aside>
   );
 }
 
-export function agentStages(job: AnalysisJob) {
-  const currentIndex = AGENTS.findIndex((agent) => agent.name === job.current_step);
-  const failed = job.status === "failed";
-  const allComplete = job.current_step === "persist_incident" || job.current_step === "complete" || job.status === "incident_created" || job.status === "no_incident";
+export function agentStages(job?: AnalysisJob | null, actionJob?: ActionJob | null) {
+  const activeAnalysis = Boolean(job && ["queued", "running"].includes(job.status));
+  const analysisComplete = activeAnalysis && ["persist_incident", "complete"].includes(job?.current_step || "");
+  const currentIndex = activeAnalysis
+    ? AGENTS.findIndex((agent) => agent.name === job?.current_step)
+    : -1;
 
   return AGENTS.map((agent, index) => {
-    let status: AgentStatus = "waiting";
-    if (allComplete) status = "complete";
-    else if (currentIndex >= 0 && index < currentIndex) status = "complete";
-    else if (currentIndex === index) status = failed ? "failed" : "working";
-    return { ...agent, status };
+    if (agent.name === "executor") {
+      return { ...agent, ...executorStage(activeAnalysis ? null : actionJob) };
+    }
+    let status: AgentStatus = activeAnalysis && !analysisComplete ? "waiting" : "complete";
+    if (activeAnalysis && !analysisComplete && currentIndex >= 0 && index < currentIndex) status = "complete";
+    if (activeAnalysis && !analysisComplete && currentIndex === index) status = "working";
+    return { ...agent, status, statusLabel: defaultStatusLabel(status) };
   });
 }
 
-function stageStatusLabel(status: AgentStatus) {
+function executorStage(actionJob?: ActionJob | null): { status: AgentStatus; statusLabel: string } {
+  if (!actionJob) return { status: "waiting", statusLabel: "Waiting" };
+  const states: Record<ActionJob["status"], { status: AgentStatus; statusLabel: string }> = {
+    awaiting_approval: { status: "waiting", statusLabel: "Needs approval" },
+    queued: { status: "waiting", statusLabel: "Queued" },
+    running: { status: "working", statusLabel: "Working" },
+    succeeded: { status: "complete", statusLabel: "Complete" },
+    rejected: { status: "skipped", statusLabel: "Not run" },
+    failed: { status: "failed", statusLabel: "Failed" },
+  };
+  return states[actionJob.status];
+}
+
+function defaultStatusLabel(status: AgentStatus) {
   const labels: Record<AgentStatus, string> = {
     waiting: "Waiting",
     working: "Working",
     complete: "Complete",
+    skipped: "Not run",
     failed: "Failed",
   };
   return labels[status];
+}
+
+function stageIcon(status: AgentStatus) {
+  if (status === "complete") return <Check size={12} />;
+  if (status === "working") return <RefreshCw size={11} className="spin" />;
+  if (status === "skipped") return <Minus size={11} />;
+  if (status === "failed") return <AlertTriangle size={11} />;
+  return <Clock3 size={11} />;
 }

@@ -45,7 +45,9 @@ def notify_decision_result(
     target = presentation.get("target") or "the source address"
     duration = presentation.get("duration_label") or "1 hour"
 
-    if error:
+    if error and decision == "approve" and stored_incident.get("status") == "approved":
+        content = f"❌ Your approval for {target} was saved, but SecAi could not finish the action. {error}"
+    elif error:
         content = f"❌ SecAi could not save your decision for {target}. {error}"
     elif decision == "reject":
         content = f"✅ You chose not to block {target}. No traffic was changed."

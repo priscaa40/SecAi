@@ -11,58 +11,6 @@ OFFICIAL_SOURCE_URLS = {
     "OWASP_CHEAT_SHEETS": "https://owasp.org/www-project-cheat-sheets/",
 }
 
-SERVER_INFO = {"name": "secai-security-knowledge", "version": "0.1.0"}
-
-MCP_TOOLS: dict[str, dict[str, Any]] = {
-    "list_security_profiles": {
-        "description": "Return source-backed SecAi security profiles.",
-        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
-    },
-    "lookup_security_profile": {
-        "description": "Return one source-backed SecAi security profile by ID.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {"entry_id": {"type": "string"}},
-            "required": ["entry_id"],
-            "additionalProperties": False,
-        },
-    },
-    "find_matching_security_profiles": {
-        "description": "Return likely SecAi security profiles for a serialized event JSON object.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {"event": {"type": "object"}, "limit": {"type": "integer", "minimum": 1, "maximum": 10}},
-            "required": ["event"],
-            "additionalProperties": False,
-        },
-    },
-    "search_nvd_vulnerabilities": {
-        "description": "Search the official NVD CVE API for current vulnerability context.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "keyword": {"type": "string"},
-                "cwe_id": {"type": "string"},
-                "limit": {"type": "integer", "minimum": 1, "maximum": 20},
-            },
-            "additionalProperties": False,
-        },
-    },
-    "query_osv_package_vulnerabilities": {
-        "description": "Query the official OSV API for package vulnerability context.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "ecosystem": {"type": "string"},
-                "package": {"type": "string"},
-                "version": {"type": "string"},
-            },
-            "required": ["ecosystem", "package"],
-            "additionalProperties": False,
-        },
-    },
-}
-
 SECURITY_PROFILES: list[dict[str, Any]] = [
     {
         "id": "sql_injection_attempt",

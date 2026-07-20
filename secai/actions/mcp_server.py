@@ -124,7 +124,10 @@ def apply_temporary_ip_block(action_job_id: int) -> dict[str, Any]:
 
 
 def main() -> None:
-    mcp.run(transport="stdio")
+    try:
+        mcp.run(transport="stdio")
+    finally:
+        database.close_database_pool()
 
 
 if __name__ == "__main__":
