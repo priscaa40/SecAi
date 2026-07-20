@@ -1,1 +1,1 @@
-"""Public Northstar judge workload for SecAi security-group and SLS testing."""
+"""Public Northstar workload for SecAi security-group and SLS testing."""

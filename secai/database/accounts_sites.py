@@ -159,41 +159,6 @@ def user_owns_site(site_id: str, owner_email: str) -> bool:
     return bool(site and site.get("owner_email") == owner_email)
 
 
-def ensure_judge_site(owner_email: str) -> dict[str, Any]:
-    """Create the isolated judge site if it does not exist."""
-    with connect() as conn:
-        row = conn.execute("select * from sites where site_id = ?", ("judge-site",)).fetchone()
-        if row:
-            conn.execute(
-                "update sites set owner_email = ?, evidence_source = ? where site_id = ?",
-                (owner_email, "alibaba_autopilot", "judge-site"),
-            )
-            return {**dict(row), "owner_email": owner_email, "evidence_source": "alibaba_autopilot"}
-        ingest_key = secrets.token_urlsafe(32)
-        conn.execute(
-            "insert into sites (site_id, name, owner_email, ingest_key, evidence_source, created_at) "
-            "values (?, ?, ?, ?, ?, ?)",
-            ("judge-site", "Northstar Goods", owner_email, ingest_key, "alibaba_autopilot", utc_now()),
-        )
-    site = get_site("judge-site")
-    if not site:
-        raise RuntimeError("Failed to create judge site")
-    return site
-
-
-def ensure_judge_user(password_hash: str, email: str) -> dict[str, Any]:
-    """Create the isolated judge account once."""
-    existing = get_user_by_email(email)
-    if existing:
-        with connect() as conn:
-            conn.execute("update users set password_hash = ? where id = ?", (password_hash, existing["id"]))
-        user = get_user_by_email(email)
-        if not user:
-            raise RuntimeError("Failed to update judge user")
-        return user
-    return create_user(email, password_hash)
-
-
 def verify_ingest_key(site_id: str, ingest_key: str | None) -> bool:
     """Return whether an ingest key is valid for a site."""
     site = get_site(site_id)

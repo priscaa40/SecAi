@@ -10,8 +10,6 @@ from secai import database
 from secai.dashboard_api.dependencies import (
     current_user_email,
     ensure_site_owner,
-    is_judge_owner,
-    protect_judge_configuration,
 )
 from secai.dashboard_api.rate_limit import enforce_request_rate
 from secai.event_sources import alibaba_sls
@@ -35,7 +33,6 @@ logger = logging.getLogger(__name__)
 def delete_site(site_id: str, user_email: str = Depends(current_user_email)) -> dict[str, str]:
     """Permanently delete an owned site and all SecAi data attached to it."""
     ensure_site_owner(site_id, user_email)
-    protect_judge_configuration(site_id, user_email)
     if _policy_that_blocks_cloud_changes(site_id):
         raise HTTPException(
             status_code=409,
@@ -50,7 +47,7 @@ def delete_site(site_id: str, user_email: str = Depends(current_user_email)) -> 
 def rotate_ingest_key(site_id: str, user_email: str = Depends(current_user_email)) -> dict[str, str]:
     """Rotate a site's browser ingest credential."""
     ensure_site_owner(site_id, user_email)
-    protect_judge_configuration(site_id, user_email)
+    
     return {"site_id": site_id, "ingest_key": database.rotate_site_ingest_key(site_id)}
 
 
@@ -58,7 +55,7 @@ def rotate_ingest_key(site_id: str, user_email: str = Depends(current_user_email
 def create_discord_setup(site_id: str, user_email: str = Depends(current_user_email)) -> dict[str, str]:
     """Create or replace the one-time Discord binding for an owned website."""
     ensure_site_owner(site_id, user_email)
-    protect_judge_configuration(site_id, user_email)
+    
     if readiness_error := discord.setup_readiness_error():
         raise HTTPException(status_code=503, detail=readiness_error)
     try:
@@ -71,8 +68,6 @@ def create_discord_setup(site_id: str, user_email: str = Depends(current_user_em
 @router.post("", response_model=SiteOut)
 def create_site(payload: SiteCreate, user_email: str = Depends(current_user_email)) -> dict[str, Any]:
     """Create a monitored site and return its ingest credentials."""
-    if is_judge_owner(user_email):
-        raise HTTPException(status_code=403, detail="The public judge account is limited to the isolated judge site.")
     return database.create_site(payload.name, user_email, payload.evidence_source)
 
 
@@ -90,7 +85,7 @@ def save_alibaba_autopilot_config(
 ) -> dict[str, Any]:
     """Save Alibaba Autopilot settings for no-code log detection and security group enforcement."""
     ensure_site_owner(site_id, user_email)
-    protect_judge_configuration(site_id, user_email)
+    
     security_group_id = payload.security_group_id.strip() if payload.security_group_id else None
     ecs_instance_id = payload.ecs_instance_id.strip()
     if payload.enforcement_mode == "security_group" and not security_group_id:
@@ -212,7 +207,6 @@ def verify_alibaba_collector(
 ) -> dict[str, Any]:
     """Verify that the selected Logstore is queryable before enabling SLS polling."""
     ensure_site_owner(site_id, user_email)
-    protect_judge_configuration(site_id, user_email)
     enforce_request_rate(request, f"alibaba-collector-verify:{site_id}", 30, 3600)
     saved = database.get_alibaba_autopilot_config(site_id)
     if not saved:
@@ -243,7 +237,6 @@ def prepare_alibaba_collector_template(
 ) -> dict[str, Any]:
     """Re-check the Logstore index and generate a retry-safe collector template."""
     ensure_site_owner(site_id, user_email)
-    protect_judge_configuration(site_id, user_email)
     enforce_request_rate(request, f"alibaba-collector-template:{site_id}", 30, 3600)
     saved = database.get_alibaba_autopilot_config(site_id)
     if not saved:
@@ -279,7 +272,6 @@ def prepare_alibaba_connection(
 ) -> dict[str, Any]:
     """Generate the external ID and authorization template for one owned website."""
     ensure_site_owner(site_id, user_email)
-    protect_judge_configuration(site_id, user_email)
     enforce_request_rate(request, f"alibaba-prepare:{site_id}", 10, 3600)
     try:
         database.prepare_alibaba_connection(site_id)
@@ -297,7 +289,6 @@ def verify_alibaba_connection(
 ) -> dict[str, Any]:
     """Verify the customer-approved role before resource discovery is allowed."""
     ensure_site_owner(site_id, user_email)
-    protect_judge_configuration(site_id, user_email)
     enforce_request_rate(request, f"alibaba-verify:{site_id}", 20, 3600)
     saved = database.get_alibaba_autopilot_config(site_id)
     if not saved:
@@ -338,7 +329,6 @@ def disconnect_alibaba_connection(
 ) -> dict[str, Any]:
     """Disconnect a customer role only when no active provider work depends on it."""
     ensure_site_owner(site_id, user_email)
-    protect_judge_configuration(site_id, user_email)
     if _policy_that_blocks_cloud_changes(site_id):
         raise HTTPException(
             status_code=409,

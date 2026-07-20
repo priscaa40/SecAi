@@ -1080,8 +1080,6 @@ details > summary::-webkit-details-marker {
   .login-copy h1 { font-size: 2.25rem; }
   .public-actions { align-items: stretch; flex-direction: column; }
   .auth-card { padding: 24px 20px; }
-  .judge-access { align-items: flex-start; flex-direction: column; }
-
   .dashboard-sidebar { grid-template-columns: auto 1fr auto; padding: 12px; gap: 10px; }
   .dashboard-sidebar .brand-name { display: none; }
   .dashboard-nav button { padding: 0 6px; font-size: 0.7rem; }

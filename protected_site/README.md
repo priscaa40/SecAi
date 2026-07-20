@@ -1,6 +1,6 @@
 # Northstar Goods storefront
 
-This is SecAi's isolated public judge workload. It has no real accounts, payments, database, or file access. Suspicious inputs are escaped or rejected, while browser evidence and JSON access logs reproduce the signals the agent needs.
+This is SecAi's isolated public demo workload. It has no real accounts, payments, database, or file access. Suspicious inputs are escaped or rejected, while browser evidence and JSON access logs reproduce the signals the agent needs.
 
 The `/attack-lab` page generates inert SQL-injection, XSS, path-traversal, login-burst, rapid-form, and controlled server-error traffic. Container stdout uses SLS-friendly fields including method, path, query, status code, IP, user agent, and message.
 

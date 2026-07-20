@@ -19,17 +19,6 @@ class Settings(BaseSettings):
     qwen_max_output_tokens: int = 900
     qwen_timeout_seconds: float = 45
     qwen_max_retries: int = 2
-    secai_judge_mode: bool = False
-    secai_judge_email: str | None = None
-    secai_judge_password: str | None = None
-    secai_judge_alibaba_region: str = "ap-southeast-1"
-    secai_judge_alibaba_role_arn: str | None = None
-    secai_judge_alibaba_external_id: str | None = None
-    secai_judge_security_group_id: str | None = None
-    secai_judge_sls_endpoint: str | None = None
-    secai_judge_sls_project: str | None = None
-    secai_judge_sls_logstore: str | None = None
-    secai_judge_ecs_instance_id: str | None = None
     secai_max_payload_chars: int = 8000
     secai_max_request_bytes: int = 8192
     secai_recent_event_limit: int = 20

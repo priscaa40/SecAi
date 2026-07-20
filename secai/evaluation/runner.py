@@ -15,7 +15,7 @@ def load_cases() -> list[dict[str, Any]]:
 
 
 def score_predictions(cases: list[dict[str, Any]], predictions: list[dict[str, Any]]) -> dict[str, Any]:
-    """Calculate compact judge-friendly incident and classification metrics."""
+    """Calculate compact user-friendly incident and classification metrics."""
     by_name = {prediction["name"]: prediction for prediction in predictions}
     true_positive = false_positive = false_negative = true_negative = profile_matches = 0
     expected_profiles = 0
