@@ -1,5 +1,15 @@
 # Alibaba Cloud deployment proof
 
+## Key Alibaba Cloud Services Used
+
+- **Simple Log Service (SLS)**: Real-time log collection from protected ECS instances.
+- **Elastic Compute Service (ECS)**: Backend + protected demo storefront.
+- **Security Groups**: Dynamic IP blocking and rollback.
+- **RAM Roles + STS**: Secure cross-account access (no stored AccessKeys).
+- **Qwen Model Studio**: All agent reasoning.
+
+
+
 - **[Qwen Cloud API configuration](https://github.com/priscaa40/SecAi/blob/main/secai/integrations/qwen_cloud.py)** shows the required `https://dashscope-intl.aliyuncs.com/compatible-mode/v1` endpoint used by the deployed agent workflow.
 - **[Alibaba ECS API integration](https://github.com/priscaa40/SecAi/blob/main/secai/integrations/alibaba_ecs.py)** shows the backend calling Alibaba Cloud services for the verified action lifecycle.
 
